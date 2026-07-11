@@ -1,0 +1,41 @@
+{
+  "_说明": "=== 寿司郎排队监控配置 ===",
+  "_抓包后填写": "用抓包工具获取 API 后，将下面的信息填入",
+
+  "api": {
+    "base_url": "https://api.example.com",
+    "queue_status_path": "/api/v1/queue/status",
+    "store_id": "你的门店ID",
+    "poll_interval_seconds": 15
+  },
+
+  "auth": {
+    "token": "从抓包获取的 Authorization token",
+    "cookie": "从抓包获取的 cookie 字符串",
+    "headers": {
+      "_comment": "其他自定义请求头，抓包后按需填写",
+      "x-app-version": "",
+      "x-device-id": ""
+    }
+  },
+
+  "user": {
+    "my_queue_number": "",
+    "phone_last4": "",
+    "_说明": "my_queue_number: 你取的号, phone_last4: 手机尾号后4位"
+  },
+
+  "alerts": {
+    "tables_ahead_warning": 10,
+    "tables_ahead_leave_now": 5,
+    "travel_time_minutes": 15,
+    "_说明": "tables_ahead_warning: 前面剩N桌时发出提醒, tables_ahead_leave_now: 前面剩N桌时必须出发, travel_time_minutes: 你到店需要的时间(分钟)"
+  },
+
+  "display": {
+    "language": "zh",
+    "theme": "dark",
+    "sound_enabled": true,
+    "sound_volume": 0.8
+  }
+}

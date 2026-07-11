@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🍣 寿司郎排队监控</title>
+<style>
+/* ============================================================
+   寿司郎排队监控 - 仪表盘样式
+   ============================================================ */
+
+:root {
+  --bg: #0d1117;
+  --card-bg: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-secondary: #8b949e;
+  --accent: #e63946;
+  --accent-glow: #ff6b6b;
+  --green: #2ea043;
+  --yellow: #d2991d;
+  --orange: #db6d28;
+  --purple: #a371f7;
+  --blue: #58a6ff;
+  --radius: 12px;
+  --transition: 0.25s ease;
+}
+
+[data-theme="light"] {
+  --bg: #f6f8fa;
+  --card-bg: #ffffff;
+  --border: #d0d7de;
+  --text: #24292f;
+  --text-secondary: #57606a;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", "Helvetica Neue", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  transition: background var(--transition), color var(--transition);
+}
+
+/* ---- Header ---- */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(16px);
+}
+.header-left { display: flex; align-items: center; gap: 12px; }
+.header h1 { font-size: 20px; font-weight: 700; white-space: nowrap; }
+.header-logo { font-size: 32px; line-height: 1; }
+.status-dot {
+  width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+  animation: pulse 2s infinite;
+}
+.status-dot.online { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.status-dot.offline { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: none; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.header-right {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 13px; color: var(--text-secondary);
+}
+.last-update { font-variant-numeric: tabular-nums; }
+.refresh-countdown { font-variant-numeric: tabular-nums; color: var(--blue); min-width: 40px; }
+
+/* ---- Theme Toggle ---- */
+.theme-toggle {
+  background: var(--border); border: none; color: var(--text);
+  cursor: pointer; border-radius: 20px; padding: 6px 12px;
+  font-size: 13px; transition: all var(--transition);
+}
+.theme-toggle:hover { opacity: 0.8; }
+
+/* ---- Alert Banner ---- */
+.alert-banner {
+  display: none;
+  padding: 14px 24px;
+  font-weight: 600;
+  font-size: 15px;
+  text-align: center;
+  animation: slideDown 0.4s ease;
+}
+.alert-banner.warning {
+  display: block;
+  background: linear-gradient(135deg, #d2991d22, #d2991d11);
+  color: var(--yellow);
+  border-bottom: 2px solid var(--yellow);
+}
+.alert-banner.urgent {
+  display: block;
+  background: linear-gradient(135deg, #e6394622, #e6394611);
+  color: var(--accent-glow);
+  border-bottom: 2px solid var(--accent);
+  animation: slideDown 0.4s ease, urgentPulse 1.5s ease-in-out infinite;
+}
+@keyframes slideDown { from { transform: translateY(-100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes urgentPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.7; } }
+
+/* ---- Main Layout ---- */
+.container { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+
+/* ---- Stats Grid ---- */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.stat-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  position: relative;
+  overflow: hidden;
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+}
+.stat-card.highlight {
+  border-color: var(--accent);
+  box-shadow: 0 0 20px rgba(230, 57, 70, 0.08);
+}
+.stat-label {
+  font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;
+  text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500;
+}
+.stat-value {
+  font-size: 36px; font-weight: 800; line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.stat-value.big { font-size: 48px; }
+.stat-sub {
+  font-size: 13px; color: var(--text-secondary); margin-top: 6px;
+}
+.stat-icon {
+  position: absolute; top: 16px; right: 16px; font-size: 28px;
+  opacity: 0.3;
+}
+
+/* ---- Progress Bar ---- */
+.progress-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 20px;
+}
+.progress-header {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 16px;
+}
+.progress-title { font-size: 15px; font-weight: 600; }
+.progress-detail { font-size: 13px; color: var(--text-secondary); }
+.progress-bar-outer {
+  height: 16px; background: var(--border); border-radius: 8px;
+  overflow: hidden; position: relative;
+}
+.progress-bar-inner {
+  height: 100%; background: linear-gradient(90deg, var(--accent), var(--orange), var(--yellow), var(--green));
+  border-radius: 8px; transition: width 0.6s ease;
+  position: relative;
+}
+.progress-bar-inner::after {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+  animation: shimmer 2s infinite;
+}
+@keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+.progress-labels {
+  display: flex; justify-content: space-between; margin-top: 10px;
+  font-size: 12px; color: var(--text-secondary);
+}
+
+/* ---- History Chart ---- */
+.chart-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 20px;
+}
+.chart-title { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+#chart {
+  width: 100%; height: 200px;
+  display: block;
+}
+
+/* ---- Control Panel ---- */
+.control-section {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  margin-bottom: 20px; align-items: center;
+}
+.control-section input {
+  background: var(--card-bg); border: 1px solid var(--border);
+  color: var(--text); padding: 8px 14px; border-radius: 8px;
+  font-size: 14px; width: 180px; transition: border-color var(--transition);
+}
+.control-section input:focus { outline: none; border-color: var(--accent); }
+.control-section input::placeholder { color: var(--text-secondary); }
+.btn {
+  background: var(--card-bg); border: 1px solid var(--border);
+  color: var(--text); padding: 8px 18px; border-radius: 8px;
+  cursor: pointer; font-size: 14px; font-weight: 500;
+  transition: all var(--transition); white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent-glow); }
+.btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
+.btn.primary:hover { background: #c1121f; }
+
+/* ---- Alert Settings ---- */
+.alert-settings {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  font-size: 13px; color: var(--text-secondary);
+}
+.alert-settings input {
+  width: 60px; padding: 4px 8px; margin: 0 4px;
+  background: var(--card-bg); border: 1px solid var(--border);
+  color: var(--text); border-radius: 6px; text-align: center;
+}
+
+/* ---- Footer ---- */
+.footer {
+  text-align: center; padding: 16px; color: var(--text-secondary);
+  font-size: 12px;
+}
+.footer a { color: var(--blue); text-decoration: none; }
+
+/* ---- Notification Toast ---- */
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: var(--card-bg); border: 1px solid var(--accent);
+  border-radius: var(--radius); padding: 16px 20px;
+  min-width: 280px; max-width: 400px;
+  transform: translateX(120%); transition: transform 0.4s ease;
+  z-index: 9999; box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+.toast.show { transform: translateX(0); }
+.toast-title { font-weight: 700; margin-bottom: 4px; }
+.toast-body { font-size: 13px; color: var(--text-secondary); }
+.toast-close {
+  position: absolute; top: 8px; right: 12px;
+  background: none; border: none; color: var(--text-secondary);
+  cursor: pointer; font-size: 18px;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 640px) {
+  .header { padding: 12px 16px; }
+  .header h1 { font-size: 16px; }
+  .stat-value { font-size: 28px; }
+  .stat-value.big { font-size: 36px; }
+  .stats-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .container { padding: 12px; }
+}
+
+/* No data fallback */
+.loading-placeholder {
+  text-align: center; padding: 40px; color: var(--text-secondary);
+}
+.loading-spinner {
+  display: inline-block; width: 32px; height: 32px;
+  border: 3px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- Alert Banner -->
+<div id="alert-banner" class="alert-banner"></div>
+
+<!-- Header -->
+<header class="header">
+  <div class="header-left">
+    <span class="header-logo">🍣</span>
+    <h1>寿司郎排队监控</h1>
+    <span id="status-dot" class="status-dot offline" title="连接状态"></span>
+  </div>
+  <div class="header-right">
+    <span>更新于 <span id="last-update" class="last-update">---</span></span>
+    <span>下次刷新: <span id="countdown" class="refresh-countdown">--</span>秒</span>
+    <button class="theme-toggle" id="theme-btn" title="切换主题">🌓</button>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Stats Grid -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-icon">🔢</div>
+      <div class="stat-label">当前叫号</div>
+      <div class="stat-value big" id="cur-number">---</div>
+      <div class="stat-sub" id="store-name">门店: 加载中...</div>
+    </div>
+
+    <div class="stat-card highlight">
+      <div class="stat-icon">🎫</div>
+      <div class="stat-label">我的号码</div>
+      <div class="stat-value big" id="my-number">---</div>
+      <div class="stat-sub" id="mynum-status">未设置</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-icon">👥</div>
+      <div class="stat-label">前面还有</div>
+      <div class="stat-value" id="tables-ahead">---</div>
+      <div class="stat-sub">桌</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-icon">⏱️</div>
+      <div class="stat-label">预计等待</div>
+      <div class="stat-value" id="est-wait">---</div>
+      <div class="stat-sub">分钟</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-icon">📊</div>
+      <div class="stat-label">叫号速度</div>
+      <div class="stat-value" id="queue-speed">---</div>
+      <div class="stat-sub">桌/小时</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-icon">🏪</div>
+      <div class="stat-label">总排队</div>
+      <div class="stat-value" id="total-waiting">---</div>
+      <div class="stat-sub">桌</div>
+    </div>
+  </div>
+
+  <!-- Progress Section -->
+  <div class="progress-section" id="progress-section" style="display:none;">
+    <div class="progress-header">
+      <span class="progress-title">📈 排队进度</span>
+      <span class="progress-detail" id="progress-detail">---</span>
+    </div>
+    <div class="progress-bar-outer">
+      <div class="progress-bar-inner" id="progress-bar" style="width: 0%;"></div>
+    </div>
+    <div class="progress-labels">
+      <span>当前叫号</span>
+      <span id="progress-pct">0%</span>
+      <span>我的号码</span>
+    </div>
+  </div>
+
+  <!-- Control Panel -->
+  <div class="control-section">
+    <input type="text" id="input-mynum" placeholder="输入你的取号号码" />
+    <button class="btn primary" onclick="setMyNumber()">💾 设置我的号码</button>
+    <button class="btn" onclick="refreshNow()">🔄 立即刷新</button>
+    <button class="btn" id="sound-btn" onclick="toggleSound()">🔊</button>
+    <span class="alert-settings">
+      提醒阈值:
+      <input type="number" id="alert-warning" placeholder="10" min="1" max="99" />
+      桌警告 /
+      <input type="number" id="alert-leave" placeholder="5" min="1" max="99" />
+      桌必须出发
+      <button class="btn" onclick="setAlertThresholds()">保存</button>
+    </span>
+  </div>
+
+  <!-- Chart -->
+  <div class="chart-section">
+    <div class="chart-title">📉 排队趋势 (最近记录)</div>
+    <canvas id="chart" width="1000" height="200"></canvas>
+  </div>
+
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  寿司郎排队监控 v1.0 | 仅供个人使用 | 数据每 <span id="footer-interval">15</span> 秒刷新
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast">
+  <button class="toast-close" onclick="hideToast()">×</button>
+  <div class="toast-title" id="toast-title"></div>
+  <div class="toast-body" id="toast-body"></div>
+</div>
+
+<script>
+// ============================================================
+// 仪表盘逻辑
+// ============================================================
+
+const CFG = {
+  pollInterval: 15, // 秒
+  alertWarning: 10,
+  alertLeaveNow: 5,
+  travelTime: 15,
+  soundEnabled: true,
+};
+
+let historyData = [];
+let countdown = CFG.pollInterval;
+let alertFired = { warning: false, urgent: false };
+let audioCtx = null;
+
+// ---- 初始化 ----
+async function init() {
+  // 加载配置
+  try {
+    const res = await fetch('/api/config');
+    const cfg = await res.json();
+    CFG.pollInterval = cfg.api?.poll_interval_seconds || 15;
+    CFG.alertWarning = cfg.alerts?.tables_ahead_warning || 10;
+    CFG.alertLeaveNow = cfg.alerts?.tables_ahead_leave_now || 5;
+    CFG.travelTime = cfg.alerts?.travel_time_minutes || 15;
+    CFG.soundEnabled = cfg.display?.sound_enabled !== false;
+
+    document.getElementById('alert-warning').value = CFG.alertWarning;
+    document.getElementById('alert-leave').value = CFG.alertLeaveNow;
+    document.getElementById('footer-interval').textContent = CFG.pollInterval;
+
+    // 如果配置中已有我的号码
+    if (cfg.user?.my_queue_number) {
+      document.getElementById('input-mynum').value = cfg.user.my_queue_number;
+    }
+  } catch(e) {
+    console.warn('无法加载配置, 使用默认值:', e);
+  }
+
+  // 主题
+  const savedTheme = localStorage.getItem('sushiro-theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', savedTheme);
+  document.getElementById('theme-btn').textContent = savedTheme === 'dark' ? '🌙' : '☀️';
+
+  document.getElementById('theme-btn').addEventListener('click', toggleTheme);
+
+  // 声音按钮
+  updateSoundBtn();
+
+  // 首次加载
+  await fetchStatus();
+  await fetchHistory();
+  await checkAlerts();
+
+  // 开始轮询
+  countdown = CFG.pollInterval;
+  updateCountdown();
+  setInterval(tickCountdown, 1000);
+  setInterval(fetchStatus, CFG.pollInterval * 1000);
+  setInterval(fetchHistory, 60000); // 每分钟更新历史
+  setInterval(checkAlerts, CFG.pollInterval * 1000 + 2000); // 状态更新后检查提醒
+}
+
+// ---- 数据获取 ----
+async function fetchStatus() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    updateUI(data);
+
+    document.getElementById('status-dot').className = 'status-dot ' +
+      (data.connected ? 'online' : 'offline');
+
+    document.getElementById('last-update').textContent =
+      data.last_update ? new Date(data.last_update).toLocaleTimeString('zh-CN') : '---';
+
+    countdown = CFG.pollInterval; // 重置倒计时
+
+  } catch(e) {
+    console.error('获取状态失败:', e);
+    document.getElementById('status-dot').className = 'status-dot offline';
+  }
+}
+
+async function fetchHistory() {
+  try {
+    const res = await fetch('/api/history');
+    historyData = await res.json();
+    drawChart();
+  } catch(e) {
+    console.warn('获取历史失败:', e);
+  }
+}
+
+async function checkAlerts() {
+  try {
+    const res = await fetch('/api/alerts');
+    const data = await res.json();
+    if (data.alerts && data.alerts.length > 0) {
+      const top = data.alerts[0];
+      showAlert(top);
+    } else {
+      hideAlert();
+    }
+  } catch(e) { /* ignore */ }
+}
+
+// ---- UI 更新 ----
+function updateUI(data) {
+  document.getElementById('cur-number').textContent = data.current_number || '---';
+  document.getElementById('store-name').textContent = '门店: ' + (data.store_name || '---');
+  document.getElementById('tables-ahead').textContent = data.tables_ahead >= 0 ? data.tables_ahead : '---';
+  document.getElementById('est-wait').textContent = data.estimated_wait_minutes >= 0 ? data.estimated_wait_minutes : '---';
+  document.getElementById('queue-speed').textContent = data.queue_speed_per_hour >= 0 ? data.queue_speed_per_hour : '---';
+  document.getElementById('total-waiting').textContent = data.total_waiting_tables >= 0 ? data.total_waiting_tables : '---';
+
+  // 我的号码
+  if (data.my_number) {
+    document.getElementById('my-number').textContent = data.my_number;
+    document.getElementById('input-mynum').value = data.my_number;
+
+    // 计算与当前号码的差距
+    const cur = parseInt(data.current_number);
+    const my = parseInt(data.my_number);
+    if (!isNaN(cur) && !isNaN(my) && my >= cur) {
+      document.getElementById('mynum-status').textContent = `前面还有 ${my - cur} 个号`;
+    } else if (!isNaN(cur) && !isNaN(my) && my < cur) {
+      document.getElementById('mynum-status').textContent = '⚠️ 已过号!';
+      document.getElementById('mynum-status').style.color = 'var(--accent)';
+    }
+  }
+
+  // 进度条
+  updateProgress(data);
+}
+
+function updateProgress(data) {
+  const curNum = parseInt(data.current_number);
+  const myNum = parseInt(data.my_number);
+  const total = data.total_waiting_tables;
+
+  if (isNaN(curNum) || isNaN(myNum) || myNum < curNum) {
+    document.getElementById('progress-section').style.display = 'none';
+    return;
+  }
+
+  document.getElementById('progress-section').style.display = 'block';
+
+  // 估算总号数范围
+  const estimatedTotal = myNum + (total > 0 ? total : 0);
+  const progress = ((curNum / estimatedTotal) * 100).toFixed(1);
+
+  document.getElementById('progress-bar').style.width = Math.min(progress, 95) + '%';
+  document.getElementById('progress-pct').textContent = progress + '%';
+  document.getElementById('progress-detail').textContent =
+    `前面还有 ${myNum - curNum} 个号 · 预计等待 ${data.estimated_wait_minutes >= 0 ? data.estimated_wait_minutes : '?'} 分钟`;
+}
+
+// ---- 提醒 ----
+function showAlert(alert) {
+  const banner = document.getElementById('alert-banner');
+  banner.className = 'alert-banner ' + alert.level;
+  banner.innerHTML = `${alert.message}`;
+
+  // 避免重复声音
+  const key = alert.level === 'urgent' ? 'urgent' : 'warning';
+  if (!alertFired[key]) {
+    alertFired[key] = true;
+    showToast(alert.title, alert.message);
+    if (CFG.soundEnabled) playBeep(alert.level === 'urgent' ? 3 : 1);
+  }
+}
+
+function hideAlert() {
+  document.getElementById('alert-banner').className = 'alert-banner';
+  alertFired = { warning: false, urgent: false };
+}
+
+function showToast(title, body) {
+  document.getElementById('toast-title').textContent = title;
+  document.getElementById('toast-body').textContent = body;
+  document.getElementById('toast').classList.add('show');
+  // 5秒后自动消失
+  setTimeout(hideToast, 5000);
+}
+
+function hideToast() {
+  document.getElementById('toast').classList.remove('show');
+}
+
+// ---- 声音 ----
+function playBeep(times) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let count = 0;
+    function beep() {
+      if (count >= times) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.frequency.value = times > 1 ? 880 : 660;
+      osc.type = 'square';
+      gain.gain.value = CFG.soundEnabled ? 0.15 : 0;
+      osc.start(); osc.stop(audioCtx.currentTime + 0.15);
+      count++;
+      if (count < times) setTimeout(beep, 250);
+    }
+    beep();
+  } catch(e) { /* 浏览器限制 */ }
+}
+
+// ---- 操作按钮 ----
+async function setMyNumber() {
+  const num = document.getElementById('input-mynum').value.trim();
+  if (!num) return;
+  try {
+    await fetch('/api/update-my-number', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ number: num }),
+    });
+    document.getElementById('my-number').textContent = num;
+    showToast('✅ 已设置', `你的取号号码: ${num}`);
+    await fetchStatus(); // 立即刷新
+  } catch(e) {
+    showToast('❌ 失败', '无法保存号码');
+  }
+}
+
+async function refreshNow() {
+  await fetchStatus();
+  await fetchHistory();
+  await checkAlerts();
+  showToast('🔄 已刷新', '数据已更新');
+}
+
+function toggleSound() {
+  CFG.soundEnabled = !CFG.soundEnabled;
+  updateSoundBtn();
+  if (CFG.soundEnabled) playBeep(1); // 测试声音
+}
+
+function updateSoundBtn() {
+  document.getElementById('sound-btn').textContent =
+    CFG.soundEnabled ? '🔊 声音开' : '🔇 声音关';
+}
+
+async function setAlertThresholds() {
+  const warning = parseInt(document.getElementById('alert-warning').value) || 10;
+  const leave = parseInt(document.getElementById('alert-leave').value) || 5;
+  CFG.alertWarning = warning;
+  CFG.alertLeaveNow = leave;
+
+  // 保存到后端
+  try {
+    const res = await fetch('/api/config');
+    const cfg = await res.json();
+    cfg.alerts.tables_ahead_warning = warning;
+    cfg.alerts.tables_ahead_leave_now = leave;
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    showToast('✅ 已保存', `提醒阈值: ${warning}桌警告 / ${leave}桌必须出发`);
+  } catch(e) {
+    showToast('❌ 失败', '保存阈值失败');
+  }
+}
+
+// ---- 主题 ----
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme');
+  const next = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  document.getElementById('theme-btn').textContent = next === 'dark' ? '🌙' : '☀️';
+  localStorage.setItem('sushiro-theme', next);
+  drawChart(); // 重绘图表适配颜色
+}
+
+// ---- 倒计时 ----
+function tickCountdown() {
+  countdown--;
+  if (countdown < 0) countdown = CFG.pollInterval;
+  updateCountdown();
+}
+
+function updateCountdown() {
+  document.getElementById('countdown').textContent = countdown;
+}
+
+// ---- 简易趋势图 (Canvas) ----
+function drawChart() {
+  const canvas = document.getElementById('chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.offsetWidth * (window.devicePixelRatio || 1);
+  const H = canvas.height = 200 * (window.devicePixelRatio || 1);
+  ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+
+  const padding = { top: 20, right: 30, bottom: 30, left: 50 };
+  const pw = canvas.offsetWidth - padding.left - padding.right;
+  const ph = 200 - padding.top - padding.bottom;
+
+  ctx.clearRect(0, 0, canvas.offsetWidth, 200);
+
+  // 空数据
+  if (!historyData || historyData.length < 2) {
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary');
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('暂无历史数据, 等待轮询...', canvas.offsetWidth / 2, 100);
+    return;
+  }
+
+  // 提取 tables_ahead 序列
+  const points = historyData.map((r, i) => ({
+    x: padding.left + (i / Math.max(1, historyData.length - 1)) * pw,
+    y: r.tables_ahead >= 0 ? r.tables_ahead : null,
+    time: r.time,
+    num: r.current_number,
+  })).filter(p => p.y !== null);
+
+  if (points.length < 2) {
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary');
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('数据不足, 等待更多记录...', canvas.offsetWidth / 2, 100);
+    return;
+  }
+
+  // Y 轴范围
+  const values = points.map(p => p.y);
+  const yMin = Math.max(0, Math.min(...values) - 3);
+  const yMax = Math.max(...values) + 3;
+  const yScale = ph / Math.max(1, yMax - yMin);
+
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const gridColor = isDark ? '#30363d' : '#d0d7de';
+  const lineColor = '#e63946';
+  const textColor = isDark ? '#8b949e' : '#57606a';
+
+  // 网格
+  ctx.strokeStyle = gridColor;
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = padding.top + (ph / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(padding.left, y);
+    ctx.lineTo(canvas.offsetWidth - padding.right, y);
+    ctx.stroke();
+
+    // Y 轴标签
+    const val = Math.round(yMax - (yMax - yMin) * (i / 4));
+    ctx.fillStyle = textColor;
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(val, padding.left - 6, y + 4);
+  }
+
+  // 折线
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  points.forEach((p, i) => {
+    const sy = padding.top + ph - (p.y - yMin) * yScale;
+    if (i === 0) ctx.moveTo(p.x, sy);
+    else ctx.lineTo(p.x, sy);
+  });
+  ctx.stroke();
+
+  // 渐变填充
+  ctx.lineTo(points[points.length - 1].x, padding.top + ph);
+  ctx.lineTo(points[0].x, padding.top + ph);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, padding.top, 0, padding.top + ph);
+  grad.addColorStop(0, 'rgba(230, 57, 70, 0.25)');
+  grad.addColorStop(1, 'rgba(230, 57, 70, 0.02)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // 数据点
+  points.forEach((p, i) => {
+    const sy = padding.top + ph - (p.y - yMin) * yScale;
+    ctx.fillStyle = lineColor;
+    ctx.beginPath();
+    ctx.arc(p.x, sy, 3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // X 轴时间标签
+  ctx.fillStyle = textColor;
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'center';
+  const xLabels = 4;
+  for (let i = 0; i <= xLabels; i++) {
+    const idx = Math.floor((points.length - 1) * (i / xLabels));
+    const p = points[Math.min(idx, points.length - 1)];
+    const t = new Date(p.time);
+    ctx.fillText(t.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), p.x, 200 - 6);
+  }
+}
+
+// 窗口大小改变时重绘
+window.addEventListener('resize', drawChart);
+
+// ---- 启动 ----
+init();
+</script>
+</body>
+</html>

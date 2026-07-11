@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🍣 寿司郎排队监控</title>
+<style>
+:root {
+  --bg: #0d1117; --card-bg: #161b22; --border: #30363d;
+  --text: #c9d1d9; --text-secondary: #8b949e;
+  --accent: #e63946; --accent-glow: #ff6b6b;
+  --green: #2ea043; --yellow: #d2991d; --blue: #58a6ff;
+  --radius: 12px; --transition: 0.25s ease;
+}
+[data-theme="light"] {
+  --bg: #f6f8fa; --card-bg: #ffffff; --border: #d0d7de;
+  --text: #24292f; --text-secondary: #57606a;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg); color: var(--text); min-height: 100vh;
+  transition: background var(--transition), color var(--transition);
+}
+
+/* Header */
+.header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 24px; background:var(--card-bg); border-bottom:1px solid var(--border);
+  position:sticky; top:0; z-index:100;
+}
+.header-left { display:flex; align-items:center; gap:12px; }
+.header h1 { font-size:18px; font-weight:700; }
+.status-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+.status-dot.online { background:var(--green); box-shadow:0 0 8px var(--green); animation:pulse 2s infinite; }
+.status-dot.offline { background:var(--accent); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.header-right { display:flex; align-items:center; gap:12px; font-size:13px; color:var(--text-secondary); }
+
+/* Store Selector */
+.store-select {
+  background:var(--card-bg); border:1px solid var(--accent); color:var(--text);
+  padding:6px 14px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer;
+}
+.store-select:focus { outline:none; }
+
+/* Settings button */
+.btn-sm {
+  background:var(--border); border:none; color:var(--text);
+  padding:6px 12px; border-radius:6px; cursor:pointer; font-size:13px;
+  transition:all var(--transition);
+}
+.btn-sm:hover { opacity:0.8; }
+
+/* Alert Banner */
+.alert-banner { display:none; padding:12px 24px; font-weight:600; font-size:14px; text-align:center; }
+.alert-banner.warning { display:block; background:linear-gradient(135deg,#d2991d22,#d2991d11); color:var(--yellow); border-bottom:2px solid var(--yellow); }
+.alert-banner.urgent { display:block; background:linear-gradient(135deg,#e6394622,#e6394611); color:var(--accent-glow); border-bottom:2px solid var(--accent); animation:urgentPulse 1.5s ease-in-out infinite; }
+@keyframes urgentPulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
+
+/* Container */
+.container { max-width:900px; margin:0 auto; padding:20px; }
+
+/* Stats Grid */
+.stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; margin-bottom:18px; }
+.stat-card {
+  background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius);
+  padding:18px 20px; transition:transform var(--transition);
+}
+.stat-card:hover { transform:translateY(-2px); }
+.stat-card.highlight { border-color:var(--accent); }
+.stat-label { font-size:12px; color:var(--text-secondary); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px; }
+.stat-value { font-size:32px; font-weight:800; font-variant-numeric:tabular-nums; }
+.stat-value.big { font-size:44px; }
+.stat-sub { font-size:12px; color:var(--text-secondary); margin-top:4px; }
+
+/* Progress */
+.progress-section { background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin-bottom:18px; }
+.progress-header { display:flex; justify-content:space-between; margin-bottom:12px; }
+.progress-title { font-size:14px; font-weight:600; }
+.progress-detail { font-size:13px; color:var(--text-secondary); }
+.progress-bar-outer { height:14px; background:var(--border); border-radius:7px; overflow:hidden; }
+.progress-bar-inner { height:100%; background:linear-gradient(90deg,var(--accent),var(--yellow),var(--green)); border-radius:7px; transition:width 0.6s ease; }
+.progress-labels { display:flex; justify-content:space-between; margin-top:8px; font-size:12px; color:var(--text-secondary); }
+
+/* Chart */
+.chart-section { background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin-bottom:18px; }
+.chart-title { font-size:14px; font-weight:600; margin-bottom:14px; }
+#chart { width:100%; height:200px; }
+
+/* Control row */
+.control-row { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; align-items:center; }
+.control-row input {
+  background:var(--card-bg); border:1px solid var(--border); color:var(--text);
+  padding:8px 12px; border-radius:8px; font-size:14px; width:160px;
+}
+.control-row input:focus { outline:none; border-color:var(--accent); }
+.btn {
+  background:var(--card-bg); border:1px solid var(--border); color:var(--text);
+  padding:8px 16px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:500;
+  transition:all var(--transition); white-space:nowrap;
+}
+.btn:hover { border-color:var(--accent); }
+.btn.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+.btn.primary:hover { background:#c1121f; }
+
+/* Setup Modal */
+.modal-overlay {
+  display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6);
+  z-index:999; align-items:center; justify-content:center;
+}
+.modal-overlay.show { display:flex; }
+.modal {
+  background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius);
+  padding:28px; max-width:500px; width:90%; max-height:85vh; overflow-y:auto;
+}
+.modal h2 { font-size:18px; margin-bottom:6px; }
+.modal p { font-size:13px; color:var(--text-secondary); margin-bottom:16px; }
+.modal label { display:block; font-size:13px; font-weight:600; margin-bottom:4px; margin-top:12px; }
+.modal input, .modal textarea {
+  width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text);
+  padding:8px 12px; border-radius:6px; font-size:14px; margin-bottom:8px;
+}
+.modal textarea { resize:vertical; min-height:60px; font-family:monospace; font-size:12px; }
+.modal .actions { display:flex; gap:10px; margin-top:16px; justify-content:flex-end; }
+
+/* Toast */
+.toast {
+  position:fixed; bottom:20px; right:20px; background:var(--card-bg);
+  border:1px solid var(--accent); border-radius:var(--radius); padding:14px 18px;
+  min-width:260px; transform:translateX(120%); transition:transform 0.4s ease; z-index:9999;
+}
+.toast.show { transform:translateX(0); }
+.toast-title { font-weight:700; margin-bottom:2px; }
+.toast-body { font-size:12px; color:var(--text-secondary); }
+
+/* Footer */
+.footer { text-align:center; padding:16px; color:var(--text-secondary); font-size:12px; }
+.footer a { color:var(--blue); text-decoration:none; }
+
+@media (max-width:600px) {
+  .header { padding:10px 14px; }
+  .header h1 { font-size:15px; }
+  .stat-value { font-size:26px; } .stat-value.big { font-size:34px; }
+  .stats-grid { grid-template-columns:1fr 1fr; gap:8px; }
+  .container { padding:10px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Alert Banner -->
+<div id="alertBanner" class="alert-banner"></div>
+
+<!-- Header -->
+<header class="header">
+  <div class="header-left">
+    <span style="font-size:28px;">🍣</span>
+    <h1>寿司郎排队监控</h1>
+    <span id="statusDot" class="status-dot offline" title="连接状态"></span>
+  </div>
+  <div class="header-right">
+    <select id="storeSelect" class="store-select" onchange="switchStore()"></select>
+    <span id="lastUpdate" style="font-variant-numeric:tabular-nums;">---</span>
+    <button class="btn-sm" onclick="showSettings()" title="设置">⚙️</button>
+    <button class="btn-sm" id="themeBtn" onclick="toggleTheme()">🌓</button>
+  </div>
+</header>
+
+<div class="container">
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">当前叫号</div>
+      <div class="stat-value big" id="curNumber">---</div>
+      <div class="stat-sub" id="storeName">---</div>
+    </div>
+    <div class="stat-card highlight">
+      <div class="stat-label">我的号码</div>
+      <div class="stat-value big" id="myNumber">---</div>
+      <div class="stat-sub" id="myNumStatus">未设置</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">前面还有</div>
+      <div class="stat-value" id="tablesAhead">---</div>
+      <div class="stat-sub">桌</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">预计等待</div>
+      <div class="stat-value" id="estWait">---</div>
+      <div class="stat-sub">分钟</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">叫号速度</div>
+      <div class="stat-value" id="queueSpeed">---</div>
+      <div class="stat-sub">桌/小时</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">总排队</div>
+      <div class="stat-value" id="totalWaiting">---</div>
+      <div class="stat-sub">桌</div>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-section" id="progressSection" style="display:none;">
+    <div class="progress-header">
+      <span class="progress-title">排队进度</span>
+      <span class="progress-detail" id="progressDetail">---</span>
+    </div>
+    <div class="progress-bar-outer">
+      <div class="progress-bar-inner" id="progressBar" style="width:0%;"></div>
+    </div>
+    <div class="progress-labels">
+      <span>当前叫号</span><span id="progressPct">0%</span><span>我的号码</span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="control-row">
+    <input type="text" id="inputMyNum" placeholder="输入你的取号号码" />
+    <button class="btn primary" onclick="setMyNumber()">💾 设置我的号码</button>
+    <button class="btn" onclick="refreshNow()">🔄 刷新</button>
+    <button class="btn" id="soundBtn" onclick="toggleSound()">🔊</button>
+    <span style="font-size:12px;color:var(--text-secondary);">
+      提醒:
+      <input type="number" id="alertWarning" value="10" style="width:60px;padding:4px 8px;" /> 桌 /
+      <input type="number" id="alertLeave" value="5" style="width:60px;padding:4px 8px;" /> 桌出发
+      <button class="btn btn-sm" onclick="saveAlerts()">保存</button>
+    </span>
+  </div>
+
+  <!-- Chart -->
+  <div class="chart-section">
+    <div class="chart-title">📉 排队趋势</div>
+    <canvas id="chart"></canvas>
+  </div>
+</div>
+
+<div class="footer">
+  寿司郎排队监控 · 仅供个人使用 · 刷新间隔 <span id="footerInterval">15</span> 秒
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast">
+  <div class="toast-title" id="toastTitle"></div>
+  <div class="toast-body" id="toastBody"></div>
+</div>
+
+<!-- Settings Modal -->
+<div id="settingsModal" class="modal-overlay">
+  <div class="modal">
+    <h2>⚙️ 设置</h2>
+    <p>所有数据仅保存在你的浏览器中，不会上传到任何服务器</p>
+    <label>代理 URL</label>
+    <input type="text" id="cfgProxyUrl" placeholder="https://xxx.supabase.co/functions/v1/proxy" />
+    <label>Bearer Token</label>
+    <textarea id="cfgToken" placeholder="Bearer eyJ..."></textarea>
+    <label>X-App-Code</label>
+    <input type="text" id="cfgAppCode" placeholder="LX6Jh7A4L2..." />
+    <label>门店配置 (JSON)</label>
+    <textarea id="cfgStores" placeholder='[{"id":"3011","name":"银泰in77 D馆"},{"id":"3012","name":"XX店"}]'></textarea>
+    <div class="actions">
+      <button class="btn" onclick="closeSettings()">取消</button>
+      <button class="btn primary" onclick="saveSettings()">💾 保存并刷新</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 寿司郎排队监控 - 全前端仪表盘
+// ============================================================
+
+// ---- 默认配置 ----
+const DEFAULTS = {
+  proxyUrl: '',
+  token: '',
+  appCode: 'LX6Jh7A4L2vag3TS+rAM8ifIzQkF3ixJM/K8+e/cfxY=',
+  stores: [{id:'3011',name:'银泰in77・D馆'}],
+};
+
+// ---- 状态 ----
+let state = {
+  connected: false, lastUpdate: null, lastError: null,
+  storeName: '', currentNumber: '---', myNumber: '',
+  tablesAhead: -1, estimatedWait: -1, queueSpeed: -1, totalWaiting: -1,
+};
+let history = [];
+let activeStoreId = DEFAULTS.stores[0].id;
+let countdown = 15;
+let pollInterval = 15;
+let alertFired = { warning: false, urgent: false };
+let soundEnabled = true;
+let audioCtx = null;
+
+// ---- 配置读写 (localStorage) ----
+function loadCfg() {
+  try {
+    const raw = localStorage.getItem('sushiro-config');
+    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+  } catch(e) { return { ...DEFAULTS }; }
+}
+function saveCfg(cfg) {
+  localStorage.setItem('sushiro-config', JSON.stringify(cfg));
+}
+
+// ---- 初始化 ----
+async function init() {
+  const cfg = loadCfg();
+  activeStoreId = cfg.stores[0]?.id || '3011';
+  pollInterval = cfg.pollInterval || 15;
+  countdown = pollInterval;
+
+  // 填充下拉
+  const sel = document.getElementById('storeSelect');
+  sel.innerHTML = '';
+  cfg.stores.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id; opt.textContent = s.name;
+    sel.appendChild(opt);
+  });
+
+  // 我的号码
+  const myNum = localStorage.getItem('sushiro-my-number-' + activeStoreId);
+  if (myNum) {
+    state.myNumber = myNum;
+    document.getElementById('inputMyNum').value = myNum;
+  }
+
+  // 提醒阈值
+  const aw = localStorage.getItem('sushiro-alert-warning') || '10';
+  const al = localStorage.getItem('sushiro-alert-leave') || '5';
+  document.getElementById('alertWarning').value = aw;
+  document.getElementById('alertLeave').value = al;
+
+  // 主题
+  const theme = localStorage.getItem('sushiro-theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', theme);
+  document.getElementById('themeBtn').textContent = theme === 'dark' ? '🌙' : '☀️';
+
+  document.getElementById('footerInterval').textContent = pollInterval;
+
+  // 首次加载
+  await fetchStoreInfo();
+  await checkAlerts();
+  updateCountdown();
+  setInterval(tickCountdown, 1000);
+  setInterval(fetchStoreInfo, pollInterval * 1000);
+  setInterval(checkAlerts, pollInterval * 1000 + 2000);
+}
+
+// ---- API 调用 ----
+async function sushiroFetch(path) {
+  const cfg = loadCfg();
+  const proxyUrl = cfg.proxyUrl;
+
+  if (!proxyUrl) {
+    console.warn('未配置代理 URL，无法请求');
+    return null;
+  }
+
+  const auth = cfg.token.startsWith('Bearer ') ? cfg.token : 'Bearer ' + cfg.token;
+  const url = proxyUrl + '?path=' + encodeURIComponent(path);
+
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        'X-Sushiro-Auth': auth,
+        'X-Sushiro-App-Code': cfg.appCode,
+      }
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    return await resp.json();
+  } catch(e) {
+    console.error('API 请求失败:', e);
+    return null;
+  }
+}
+
+// ---- 获取门店信息 ----
+async function fetchStoreInfo() {
+  const data = await sushiroFetch('/wechat/api/2.0/getStoreById?storeId=' + activeStoreId);
+  if (!data) {
+    state.connected = false;
+    state.lastError = '网络请求失败';
+    updateUI();
+    updateStatusDot(false);
+    return;
+  }
+
+  state.connected = true;
+  state.lastError = null;
+  state.lastUpdate = new Date().toISOString();
+  state.storeName = data.name || '未知门店';
+  state.totalWaiting = data.wait || 0;
+  state.estimatedWait = data.waitTimeCounter >= 0 ? data.waitTimeCounter : -1;
+
+  // getStoreById 不返回 currentNumber/tablesAhead，排队 API 需要另外获取
+  // 如果排队 API 不可用，用门店 wait 数据做近似
+
+  updateUI();
+  updateStatusDot(true);
+  countdown = pollInterval;
+
+  // 记录历史
+  history.push({
+    time: new Date().toISOString(),
+    current_number: state.currentNumber,
+    tables_ahead: state.tablesAhead,
+    estimated_wait: state.estimatedWait,
+    total_waiting: state.totalWaiting,
+  });
+  if (history.length > 500) history = history.slice(-500);
+
+  // 每20条保存
+  if (history.length % 20 === 0) {
+    localStorage.setItem('sushiro-history-' + activeStoreId, JSON.stringify(history));
+  }
+  drawChart();
+}
+
+// ---- UI 更新 ----
+function updateUI() {
+  document.getElementById('curNumber').textContent = state.currentNumber;
+  document.getElementById('storeName').textContent = state.storeName;
+  document.getElementById('tablesAhead').textContent = state.tablesAhead >= 0 ? state.tablesAhead : '---';
+  document.getElementById('estWait').textContent = state.estimatedWait >= 0 ? state.estimatedWait : '---';
+  document.getElementById('queueSpeed').textContent = state.queueSpeed >= 0 ? state.queueSpeed : '---';
+  document.getElementById('totalWaiting').textContent = state.totalWaiting >= 0 ? state.totalWaiting : '---';
+  document.getElementById('myNumber').textContent = state.myNumber || '---';
+  document.getElementById('myNumStatus').textContent = state.myNumber ? '已设置' : '未设置';
+  document.getElementById('lastUpdate').textContent = state.lastUpdate
+    ? new Date(state.lastUpdate).toLocaleTimeString('zh-CN') : '---';
+
+  updateProgress();
+}
+
+function updateStatusDot(online) {
+  document.getElementById('statusDot').className = 'status-dot ' + (online ? 'online' : 'offline');
+}
+
+function updateProgress() {
+  const curNum = parseInt(state.currentNumber);
+  const myNum = parseInt(state.myNumber);
+  if (isNaN(curNum) || isNaN(myNum) || myNum < curNum) {
+    document.getElementById('progressSection').style.display = 'none';
+    return;
+  }
+  document.getElementById('progressSection').style.display = 'block';
+  const total = state.totalWaiting > 0 ? myNum + state.totalWaiting : myNum + 10;
+  const pct = Math.min(((curNum / total) * 100), 95).toFixed(1);
+  document.getElementById('progressBar').style.width = pct + '%';
+  document.getElementById('progressPct').textContent = pct + '%';
+  document.getElementById('progressDetail').textContent = `前面还有 ${myNum - curNum} 个号 · 预计等待 ${state.estimatedWait >= 0 ? state.estimatedWait : '?'} 分钟`;
+}
+
+// ---- 提醒 ----
+async function checkAlerts() {
+  const aw = parseInt(localStorage.getItem('sushiro-alert-warning') || '10');
+  const al = parseInt(localStorage.getItem('sushiro-alert-leave') || '5');
+  const ta = state.tablesAhead;
+
+  if (ta < 0) return;
+  const banner = document.getElementById('alertBanner');
+
+  if (ta <= al) {
+    banner.className = 'alert-banner urgent';
+    banner.textContent = `🚨 前面只剩 ${ta} 桌! 必须立刻出发!`;
+    if (!alertFired.urgent) { alertFired.urgent = true; toast('立刻出发!', `前面只剩 ${ta} 桌`); if (soundEnabled) beep(3); }
+  } else if (ta <= aw) {
+    banner.className = 'alert-banner warning';
+    banner.textContent = `⚠️ 前面还有 ${ta} 桌, 建议准备出发`;
+    if (!alertFired.warning) { alertFired.warning = true; toast('准备出发', `前面还有 ${ta} 桌, 预计 ${state.estimatedWait} 分钟`); if (soundEnabled) beep(1); }
+  } else {
+    banner.className = 'alert-banner';
+    alertFired = { warning: false, urgent: false };
+  }
+}
+
+// ---- 操作 ----
+function switchStore() {
+  activeStoreId = document.getElementById('storeSelect').value;
+  const myNum = localStorage.getItem('sushiro-my-number-' + activeStoreId);
+  state.myNumber = myNum || '';
+  document.getElementById('inputMyNum').value = state.myNumber || '';
+  document.getElementById('myNumber').textContent = state.myNumber || '---';
+  document.getElementById('myNumStatus').textContent = state.myNumber ? '已设置' : '未设置';
+  document.getElementById('progressSection').style.display = 'none';
+  document.getElementById('alertBanner').className = 'alert-banner';
+  alertFired = { warning: false, urgent: false };
+  countdown = 2;
+  fetchStoreInfo();
+}
+
+async function setMyNumber() {
+  const num = document.getElementById('inputMyNum').value.trim();
+  if (!num) return;
+  state.myNumber = num;
+  localStorage.setItem('sushiro-my-number-' + activeStoreId, num);
+  document.getElementById('myNumber').textContent = num;
+  document.getElementById('myNumStatus').textContent = '已设置';
+  toast('✅ 已设置', `门店 ${state.storeName}: ${num}`);
+  updateProgress();
+}
+
+async function refreshNow() {
+  countdown = 2;
+  await fetchStoreInfo();
+  await checkAlerts();
+  toast('🔄 已刷新', '');
+}
+
+function toggleSound() {
+  soundEnabled = !soundEnabled;
+  document.getElementById('soundBtn').textContent = soundEnabled ? '🔊' : '🔇';
+  if (soundEnabled) beep(1);
+}
+
+function saveAlerts() {
+  const aw = document.getElementById('alertWarning').value || '10';
+  const al = document.getElementById('alertLeave').value || '5';
+  localStorage.setItem('sushiro-alert-warning', aw);
+  localStorage.setItem('sushiro-alert-leave', al);
+  toast('✅ 已保存', `提醒阈值: ${aw}桌 / ${al}桌`);
+}
+
+// ---- 设置弹窗 ----
+function showSettings() {
+  const cfg = loadCfg();
+  document.getElementById('cfgProxyUrl').value = cfg.proxyUrl;
+  document.getElementById('cfgToken').value = cfg.token;
+  document.getElementById('cfgAppCode').value = cfg.appCode;
+  document.getElementById('cfgStores').value = JSON.stringify(cfg.stores, null, 2);
+  document.getElementById('settingsModal').classList.add('show');
+}
+function closeSettings() {
+  document.getElementById('settingsModal').classList.remove('show');
+}
+function saveSettings() {
+  const cfg = loadCfg();
+  cfg.proxyUrl = document.getElementById('cfgProxyUrl').value.trim();
+  cfg.token = document.getElementById('cfgToken').value.trim();
+  cfg.appCode = document.getElementById('cfgAppCode').value.trim();
+  try {
+    cfg.stores = JSON.parse(document.getElementById('cfgStores').value);
+  } catch(e) {
+    toast('❌ 错误', '门店 JSON 格式不正确');
+    return;
+  }
+  saveCfg(cfg);
+  closeSettings();
+  toast('✅ 保存成功', '刷新页面生效');
+  setTimeout(() => location.reload(), 1500);
+}
+
+// ---- 主题 ----
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  document.getElementById('themeBtn').textContent = next === 'dark' ? '🌙' : '☀️';
+  localStorage.setItem('sushiro-theme', next);
+  drawChart();
+}
+
+// ---- Toast ----
+function toast(title, body) {
+  document.getElementById('toastTitle').textContent = title;
+  document.getElementById('toastBody').textContent = body;
+  document.getElementById('toast').classList.add('show');
+  setTimeout(() => document.getElementById('toast').classList.remove('show'), 4000);
+}
+
+// ---- 声音 ----
+function beep(times) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let count = 0;
+    function play() {
+      if (count >= times) return;
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination);
+      o.frequency.value = times > 1 ? 880 : 660;
+      o.type = 'square'; g.gain.value = 0.12;
+      o.start(); o.stop(audioCtx.currentTime + 0.15);
+      count++; if (count < times) setTimeout(play, 200);
+    }
+    play();
+  } catch(e) {}
+}
+
+// ---- 倒计时 ----
+function tickCountdown() { countdown--; if (countdown < 0) countdown = pollInterval; updateCountdown(); }
+function updateCountdown() {
+  const el = document.getElementById('statusDot');
+  if (el) el.title = '下次刷新: ' + countdown + '秒';
+}
+
+// ---- 图表 ----
+function drawChart() {
+  const canvas = document.getElementById('chart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.offsetWidth, H = 200;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.scale(dpr, dpr);
+
+  const pad = {t:18,r:20,b:28,l:45}, pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  ctx.clearRect(0, 0, W, H);
+
+  if (!history || history.length < 2) {
+    ctx.fillStyle = isDark ? '#8b949e' : '#57606a';
+    ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('暂无历史数据', W / 2, H / 2);
+    return;
+  }
+
+  const pts = history.filter(r => r.tables_ahead >= 0).map((r, i) => ({ x: pad.l + (i / Math.max(1, history.filter(r => r.tables_ahead >= 0).length - 1)) * pw, y: r.tables_ahead, t: r.time }));
+  if (pts.length < 2) return;
+
+  const vals = pts.map(p => p.y), yMin = Math.max(0, Math.min(...vals) - 2), yMax = Math.max(...vals) + 2;
+  const ys = ph / Math.max(1, yMax - yMin);
+  const grid = isDark ? '#30363d' : '#d0d7de', line = '#e63946', tc = isDark ? '#8b949e' : '#57606a';
+
+  // Grid
+  ctx.strokeStyle = grid; ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (ph / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    ctx.fillStyle = tc; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(Math.round(yMax - (yMax - yMin) * (i / 4)), pad.l - 6, y + 4);
+  }
+
+  // Line
+  ctx.strokeStyle = line; ctx.lineWidth = 2;
+  ctx.beginPath(); pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, pad.t + ph - (p.y - yMin) * ys) : ctx.lineTo(p.x, pad.t + ph - (p.y - yMin) * ys)); ctx.stroke();
+
+  // Fill
+  ctx.lineTo(pts[pts.length - 1].x, pad.t + ph); ctx.lineTo(pts[0].x, pad.t + ph); ctx.closePath();
+  const g = ctx.createLinearGradient(0, pad.t, 0, pad.t + ph);
+  g.addColorStop(0, 'rgba(230,57,70,0.2)'); g.addColorStop(1, 'rgba(230,57,70,0.02)');
+  ctx.fillStyle = g; ctx.fill();
+
+  // Points
+  pts.forEach(p => { ctx.fillStyle = line; ctx.beginPath(); ctx.arc(p.x, pad.t + ph - (p.y - yMin) * ys, 2.5, 0, Math.PI * 2); ctx.fill(); });
+
+  // X labels
+  ctx.fillStyle = tc; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  for (let i = 0; i <= 3; i++) {
+    const p = pts[Math.min(Math.floor((pts.length - 1) * (i / 3)), pts.length - 1)];
+    ctx.fillText(new Date(p.t).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), p.x, H - 8);
+  }
+}
+window.addEventListener('resize', drawChart);
+
+// ---- 首次启动检测 ----
+function checkFirstRun() {
+  const cfg = loadCfg();
+  if (!cfg.proxyUrl || !cfg.token) {
+    showSettings();
+  }
+}
+
+// ---- 启动 ----
+init().then(() => {
+  // 加载历史
+  const h = localStorage.getItem('sushiro-history-' + activeStoreId);
+  if (h) { try { history = JSON.parse(h); drawChart(); } catch(e) {} }
+  checkFirstRun();
+});
+</script>
+</body>
+</html>
