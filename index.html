@@ -536,6 +536,8 @@ function showSettings() {
 }
 function closeSettings() {
   document.getElementById('settingsModal').classList.remove('show');
+  // 关闭后当天不再自动弹出
+  localStorage.setItem('sushiro-setup-skipped', new Date().toDateString());
 }
 function saveSettings() {
   const cfg = loadCfg();
@@ -549,6 +551,7 @@ function saveSettings() {
     return;
   }
   saveCfg(cfg);
+  localStorage.setItem('sushiro-setup-skipped', new Date().toDateString());
   closeSettings();
   toast('✅ 保存成功', '刷新页面生效');
   setTimeout(() => location.reload(), 1500);
@@ -660,6 +663,9 @@ window.addEventListener('resize', drawChart);
 function checkFirstRun() {
   const cfg = loadCfg();
   if (!cfg.proxyUrl || !cfg.token) {
+    // 今天已经关掉过弹窗就不再自动弹
+    const skipped = localStorage.getItem('sushiro-setup-skipped');
+    if (skipped === new Date().toDateString()) return;
     showSettings();
   }
 }
