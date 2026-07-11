@@ -6,4 +6,4 @@ captured_apis/
 history.json
 *.apk
 .ghtoken
-.env
+.sbtoken
