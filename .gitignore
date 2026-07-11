@@ -5,3 +5,5 @@ venv/
 captured_apis/
 history.json
 *.apk
+.ghtoken
+.env
