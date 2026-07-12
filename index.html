@@ -223,6 +223,7 @@ body {
   <div class="control-row">
     <input type="text" id="inputMyNum" placeholder="输入你的取号号码" />
     <button class="btn primary" onclick="setMyNumber()">💾 设置我的号码</button>
+    <button class="btn" id="clearNumBtn" onclick="clearMyNumber()" style="display:none;">🗑️ 清除号码</button>
     <button class="btn" onclick="refreshNow()">🔄 刷新</button>
     <button class="btn" id="soundBtn" onclick="toggleSound()">🔊</button>
     <span style="font-size:12px;color:var(--text-secondary);">
@@ -339,6 +340,7 @@ async function init() {
   if (myNum) {
     state.myNumber = myNum;
     document.getElementById('inputMyNum').value = myNum;
+    document.getElementById('clearNumBtn').style.display = '';
   }
 
   // 提醒阈值
@@ -501,6 +503,7 @@ function switchStore() {
   const myNum = localStorage.getItem('sushiro-my-number-' + activeStoreId);
   state.myNumber = myNum || '';
   document.getElementById('inputMyNum').value = state.myNumber || '';
+  document.getElementById('clearNumBtn').style.display = state.myNumber ? '' : 'none';
   document.getElementById('myNumber').textContent = state.myNumber || '---';
   document.getElementById('myNumStatus').textContent = state.myNumber ? '已设置' : '未设置';
   document.getElementById('progressSection').style.display = 'none';
@@ -517,8 +520,22 @@ async function setMyNumber() {
   localStorage.setItem('sushiro-my-number-' + activeStoreId, num);
   document.getElementById('myNumber').textContent = num;
   document.getElementById('myNumStatus').textContent = '已设置';
+  document.getElementById('clearNumBtn').style.display = '';
   toast('✅ 已设置', `门店 ${state.storeName}: ${num}`);
   updateProgress();
+}
+
+function clearMyNumber() {
+  state.myNumber = '';
+  localStorage.removeItem('sushiro-my-number-' + activeStoreId);
+  document.getElementById('myNumber').textContent = '---';
+  document.getElementById('myNumStatus').textContent = '未设置';
+  document.getElementById('inputMyNum').value = '';
+  document.getElementById('clearNumBtn').style.display = 'none';
+  document.getElementById('progressSection').style.display = 'none';
+  document.getElementById('alertBanner').className = 'alert-banner';
+  alertFired = { warning: false, urgent: false };
+  toast('🗑️ 已清除', '取号号码已删除');
 }
 
 async function refreshNow() {
