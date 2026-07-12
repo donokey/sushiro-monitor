@@ -226,6 +226,7 @@ body {
     <button class="btn" id="clearNumBtn" onclick="clearMyNumber()" style="display:none;">🗑️ 清除号码</button>
     <button class="btn" onclick="refreshNow()">🔄 刷新</button>
     <button class="btn" id="soundBtn" onclick="toggleSound()">🔊</button>
+    <button class="btn" id="pipBtn" onclick="togglePiP()" title="画中画小窗">🪟</button>
     <span style="font-size:12px;color:var(--text-secondary);">
       提醒:
       <input type="number" id="alertWarning" value="10" style="width:60px;padding:4px 8px;" /> 桌 /
@@ -711,6 +712,91 @@ init().then(() => {
   if (h) { try { history = JSON.parse(h); drawChart(); } catch(e) {} }
   checkFirstRun();
 });
+
+// ---- 画中画 (Document PiP) ----
+let pipWindow = null;
+let pipTimer = null;
+
+function togglePiP() {
+  if (pipWindow) { pipWindow.close(); pipWindow = null; updatePiPButton(); return; }
+  openPiP();
+}
+
+async function openPiP() {
+  if (!('documentPictureInPicture' in window)) {
+    toast('❌ 不支持', '请使用 Chrome 116+ 或 Edge');
+    return;
+  }
+  try {
+    pipWindow = await documentPictureInPicture.requestWindow({ width: 320, height: 240 });
+
+    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+    const bg = isDark ? '#0d1117' : '#f6f8fa';
+    const cardBg = isDark ? '#161b22' : '#ffffff';
+    const border = isDark ? '#30363d' : '#d0d7de';
+    const text = isDark ? '#c9d1d9' : '#24292f';
+    const sec = isDark ? '#8b949e' : '#57606a';
+    const accent = '#e63946'; const green = '#2ea043';
+
+    pipWindow.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><style>' +
+      '*{margin:0;padding:0;box-sizing:border-box}' +
+      'body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:'+bg+';color:'+text+';padding:12px 16px;user-select:none;-webkit-user-select:none}' +
+      '.hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;font-size:13px;font-weight:700}' +
+      '.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:4px}' +
+      '.dot.on{background:'+green+'}.dot.off{background:'+accent+'}' +
+      '.row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}' +
+      '.lbl{font-size:12px;color:'+sec+'}' +
+      '.val{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}' +
+      '.val.big{font-size:30px}.val.red{color:'+accent+'}' +
+      '.hr{height:1px;background:'+border+';margin:8px 0}' +
+      '.w2{display:flex;justify-content:space-between}.w2 .val{font-size:16px}' +
+      '.ft{font-size:11px;color:'+sec+';text-align:right;margin-top:8px}' +
+      '</style></head><body>' +
+      '<div class="hdr"><span>🍣 寿司郎排队监控</span><span><span id="dot" class="dot off"></span><span id="timer">--</span>s</span></div>' +
+      '<div class="row"><span class="lbl">当前叫号</span><span class="val big" id="cur">---</span></div>' +
+      '<div class="hr"></div>' +
+      '<div class="row"><span class="lbl">我的号码</span><span class="val red" id="my">---</span></div>' +
+      '<div class="w2"><div><div class="lbl">前面还有</div><div class="val" id="ahead">---</div></div><div><div class="lbl">预计等待</div><div class="val" id="wait">---</div></div></div>' +
+      '<div class="ft" id="store">---</div>' +
+      '</body></html>');
+    pipWindow.document.close();
+
+    pipWindow.addEventListener('pagehide', () => {
+      pipWindow = null; clearInterval(pipTimer); pipTimer = null; updatePiPButton();
+    });
+
+    updatePiP();
+    pipTimer = setInterval(updatePiP, 2000);
+    updatePiPButton();
+    toast('🪟 画中画已开启', '拖到角落，干活时瞄一眼');
+  } catch(e) {
+    console.error('PiP 打开失败:', e);
+    pipWindow = null;
+  }
+}
+
+function updatePiP() {
+  if (!pipWindow) { clearInterval(pipTimer); pipTimer = null; return; }
+  try {
+    const d = pipWindow.document;
+    d.getElementById('cur').textContent = state.currentNumber;
+    d.getElementById('my').textContent = state.myNumber || '---';
+    d.getElementById('ahead').textContent = state.tablesAhead >= 0 ? state.tablesAhead + ' 桌' : '---';
+    d.getElementById('wait').textContent = state.estimatedWait >= 0 ? state.estimatedWait + ' 分钟' : '---';
+    d.getElementById('store').textContent = state.storeName;
+    const dot = d.getElementById('dot');
+    dot.className = 'dot ' + (state.connected ? 'on' : 'off');
+    d.getElementById('timer').textContent = countdown;
+  } catch(e) { pipWindow = null; clearInterval(pipTimer); pipTimer = null; updatePiPButton(); }
+}
+
+function updatePiPButton() {
+  const btn = document.getElementById('pipBtn');
+  if (btn) btn.textContent = pipWindow ? '🪟✓' : '🪟';
+}
+
+window.addEventListener('pagehide', () => { if (pipWindow) pipWindow.close(); });
+if (!('documentPictureInPicture' in window)) document.getElementById('pipBtn').style.display = 'none';
 </script>
 </body>
 </html>
