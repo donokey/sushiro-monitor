@@ -367,15 +367,11 @@ async function sushiroFetch(path) {
   }
 
   const auth = cfg.token.startsWith('Bearer ') ? cfg.token : 'Bearer ' + cfg.token;
-  const url = proxyUrl + '?path=' + encodeURIComponent(path);
+  const params = new URLSearchParams({ path, auth, code: cfg.appCode });
+  const url = proxyUrl + '?' + params.toString();
 
   try {
-    const resp = await fetch(url, {
-      headers: {
-        'X-Sushiro-Auth': auth,
-        'X-Sushiro-App-Code': cfg.appCode,
-      }
-    });
+    const resp = await fetch(url);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     return await resp.json();
   } catch(e) {
