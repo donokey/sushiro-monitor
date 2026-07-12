@@ -399,8 +399,18 @@ async function fetchStoreInfo() {
   state.totalWaiting = data.wait || 0;
   state.estimatedWait = data.waitTimeCounter >= 0 ? data.waitTimeCounter : -1;
 
-  // getStoreById 不返回 currentNumber/tablesAhead，排队 API 需要另外获取
-  // 如果排队 API 不可用，用门店 wait 数据做近似
+  // 从 groupQueues 提取当前叫号 (取最后一个号码)
+  const gq = data.groupQueues || {};
+  const allNums = [...(gq.boothQueue || []), ...(gq.mixedQueue || []), ...(gq.counterQueue || [])];
+  if (allNums.length > 0) {
+    state.currentNumber = allNums[allNums.length - 1];
+    // 自动计算前面桌数
+    const myNum = parseInt(state.myNumber);
+    const curNum = parseInt(state.currentNumber);
+    if (!isNaN(myNum) && !isNaN(curNum)) {
+      state.tablesAhead = Math.max(0, myNum - curNum);
+    }
+  }
 
   updateUI();
   updateStatusDot(true);
