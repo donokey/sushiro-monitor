@@ -304,7 +304,14 @@ let audioCtx = null;
 function loadCfg() {
   try {
     const raw = localStorage.getItem('sushiro-config');
-    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    if (!raw) return { ...DEFAULTS };
+    const parsed = JSON.parse(raw);
+    // 防止 localStorage 空值覆盖默认值
+    const merged = { ...DEFAULTS };
+    for (const key of Object.keys(merged)) {
+      if (parsed[key] != null && parsed[key] !== '') merged[key] = parsed[key];
+    }
+    return merged;
   } catch(e) { return { ...DEFAULTS }; }
 }
 function saveCfg(cfg) {

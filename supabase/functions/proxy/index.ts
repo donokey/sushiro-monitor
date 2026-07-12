@@ -3,17 +3,35 @@
  */
 const TARGET = "https://crm-cn-prd.sushiro.com.cn";
 
+function jsonRes(data: unknown, status: number, extraHeaders?: Record<string, string>): Response {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json;charset=UTF-8",
+    "Access-Control-Allow-Origin": "*",
+    ...extraHeaders,
+  };
+  return new Response(JSON.stringify(data), { status, headers });
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+      },
+    });
+  }
+
   const url = new URL(req.url);
   const path = url.searchParams.get("path") || "";
   const auth = url.searchParams.get("auth") || "";
   const code = url.searchParams.get("code") || "";
 
   if (!path) {
-    return Response.json({ error: "missing path" }, {
-      status: 400,
-      headers: { "Access-Control-Allow-Origin": "*" },
-    });
+    return jsonRes({ error: "missing path" }, 400);
   }
 
   try {
@@ -36,9 +54,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
       },
     });
   } catch (e: unknown) {
-    return Response.json({ error: "proxy error", detail: String(e) }, {
-      status: 502,
-      headers: { "Access-Control-Allow-Origin": "*" },
-    });
+    return jsonRes({ error: "proxy error", detail: String(e) }, 502);
   }
 });
