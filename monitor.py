@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import time
+import secrets
 import threading
 import queue
 import logging
@@ -25,7 +26,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 # ============================================================
@@ -37,6 +38,8 @@ HISTORY_FILE = SCRIPT_DIR / "history.json"
 STATIC_DIR = SCRIPT_DIR
 
 PORT = 8888
+# 启动时生成随机 API Key，用于保护配置写入接口
+API_KEY = secrets.token_urlsafe(16)
 
 # 日志
 logging.basicConfig(
@@ -259,8 +262,8 @@ class QueueMonitor:
             if len(self.history) > self.max_history:
                 self.history = self.history[-self.max_history:]
 
-            # 定期保存
-            if len(self.history) % 20 == 0:
+            # 定期保存（每 5 条）
+            if len(self.history) % 5 == 0:
                 save_history({"records": self.history, "max_records": self.max_history})
 
         log.info(
@@ -322,13 +325,21 @@ config = load_config()
 monitor = QueueMonitor(config)
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="")
-CORS(app)
+CORS(app, resources={r"/api/*": {"origins": ["http://localhost:8888", "http://127.0.0.1:8888"]}})
 
 
 @app.route("/")
 def index():
     """仪表盘主页"""
-    return send_from_directory(str(STATIC_DIR), "dashboard.html")
+    # 将 API Key 注入到页面中，供前端携带调用配置写入接口
+    html_path = STATIC_DIR / "dashboard.html"
+    try:
+        content = html_path.read_text(encoding="utf-8")
+        inject = f'<script>window.__SUSHIRO_API_KEY__="{API_KEY}";</script></head>'
+        content = content.replace('</head>', inject, 1)
+        return content, 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except FileNotFoundError:
+        return "dashboard.html not found", 404
 
 
 @app.route("/api/status")
@@ -347,7 +358,16 @@ def api_history():
 def api_config():
     """读取/更新配置"""
     if request.method == "POST":
+        # 鉴权: 需要携带启动时生成的 API Key
+        provided_key = request.headers.get("X-API-Key", "")
+        if provided_key != API_KEY:
+            log.warning(f"非法配置写入尝试 (来自 {request.remote_addr})")
+            return jsonify({"ok": False, "error": "未授权: 请提供正确的 X-API-Key"}), 401
+
         new_config = request.json
+        if not isinstance(new_config, dict):
+            return jsonify({"ok": False, "error": "请求体必须是 JSON 对象"}), 400
+
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(new_config, f, ensure_ascii=False, indent=2)
         # 更新当前 monitor 的配置
@@ -357,14 +377,13 @@ def api_config():
         monitor.stop()
         monitor = QueueMonitor(config)
         monitor.start()
+        log.info("配置已更新 (通过 API Key 鉴权)")
         return jsonify({"ok": True})
 
     # GET: 返回配置 (隐藏敏感信息)
     safe_config = json.loads(json.dumps(config))
     if "token" in safe_config.get("auth", {}):
-        t = safe_config["auth"]["token"]
-        if t:
-            safe_config["auth"]["token"] = t[:10] + "..." if len(t) > 10 else t
+        safe_config["auth"]["token"] = "***已隐藏***"
     if "cookie" in safe_config.get("auth", {}):
         safe_config["auth"]["cookie"] = "***已隐藏***"
     return jsonify(safe_config)
@@ -426,6 +445,7 @@ def main():
     print("=" * 55)
     print()
     print(f"  📡 仪表盘地址: http://localhost:{PORT}")
+    print(f"  🔑 API Key:    {API_KEY}")
     print(f"  ⚙️  配置文件:   {CONFIG_FILE}")
     print(f"  🏪 门店ID:     {config['api'].get('store_id', '未设置')}")
     print(f"  🔄 轮询间隔:   {config['api'].get('poll_interval_seconds', 15)}秒")
@@ -439,7 +459,7 @@ def main():
 
     # 启动 Web 服务
     try:
-        app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
+        app.run(host="127.0.0.1", port=PORT, debug=False, use_reloader=False)
     except KeyboardInterrupt:
         monitor.stop()
         log.info("👋 监控已停止")

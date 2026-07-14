@@ -666,7 +666,10 @@ async function setAlertThresholds() {
     cfg.alerts.tables_ahead_leave_now = leave;
     await fetch('/api/config', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': window.__SUSHIRO_API_KEY__ || '',
+      },
       body: JSON.stringify(cfg),
     });
     showToast('✅ 已保存', `提醒阈值: ${warning}桌警告 / ${leave}桌必须出发`);

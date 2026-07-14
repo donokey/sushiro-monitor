@@ -57,12 +57,11 @@ def is_sushiro_related(url: str) -> bool:
 
 
 def is_static_resource(url: str) -> bool:
-    """判断是否为静态资源"""
-    url_lower = url.lower()
-    for ext in IGNORE_EXTENSIONS:
-        if ext in url_lower:
-            return True
-    return False
+    """判断是否为静态资源（通过 URL 路径后缀匹配，避免子串误判）"""
+    from urllib.parse import urlparse
+    path = urlparse(url).path
+    _, ext = os.path.splitext(path)
+    return ext.lower() in IGNORE_EXTENSIONS
 
 
 def sanitize_filename(url: str) -> str:

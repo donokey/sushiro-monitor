@@ -257,12 +257,6 @@ body {
   <div class="modal">
     <h2>⚙️ 设置</h2>
     <p>所有数据仅保存在你的浏览器中，不会上传到任何服务器</p>
-    <label>代理 URL</label>
-    <input type="text" id="cfgProxyUrl" placeholder="https://xxx.supabase.co/functions/v1/proxy" />
-    <label>Bearer Token</label>
-    <textarea id="cfgToken" placeholder="Bearer eyJ..."></textarea>
-    <label>X-App-Code</label>
-    <input type="text" id="cfgAppCode" placeholder="LX6Jh7A4L2..." />
     <label>门店配置 (JSON)</label>
     <textarea id="cfgStores" placeholder='[{"id":"3011","name":"银泰in77 D馆"},{"id":"3012","name":"XX店"}]'></textarea>
     <div class="actions">
@@ -302,22 +296,36 @@ let alertFired = { warning: false, urgent: false };
 let soundEnabled = true;
 let audioCtx = null;
 
-// ---- 配置读写 (localStorage) ----
+// ---- 配置读写 (内存缓存，避免每次请求都读 localStorage) ----
+let _cfgCache = null;
 function loadCfg() {
+  if (_cfgCache) return _cfgCache;
   try {
     const raw = localStorage.getItem('sushiro-config');
-    if (!raw) return { ...DEFAULTS };
+    if (!raw) { _cfgCache = { ...DEFAULTS }; return _cfgCache; }
     const parsed = JSON.parse(raw);
-    // 防止 localStorage 空值覆盖默认值
     const merged = { ...DEFAULTS };
     for (const key of Object.keys(merged)) {
       if (parsed[key] != null && parsed[key] !== '') merged[key] = parsed[key];
     }
-    return merged;
-  } catch(e) { return { ...DEFAULTS }; }
+    _cfgCache = merged;
+    return _cfgCache;
+  } catch(e) { _cfgCache = { ...DEFAULTS }; return _cfgCache; }
 }
 function saveCfg(cfg) {
   localStorage.setItem('sushiro-config', JSON.stringify(cfg));
+  _cfgCache = null; // 清除缓存，下次 loadCfg 重新读取
+}
+
+// ---- 预构建请求 URL（避免每次请求重新拼接） ----
+let _baseUrl = '';
+let _baseParams = '';
+function buildBaseUrl() {
+  const cfg = loadCfg();
+  if (!cfg.proxyUrl) { _baseUrl = ''; return; }
+  const auth = cfg.token.startsWith('Bearer ') ? cfg.token : 'Bearer ' + cfg.token;
+  _baseUrl = cfg.proxyUrl;
+  _baseParams = '&auth=' + encodeURIComponent(auth) + '&code=' + encodeURIComponent(cfg.appCode);
 }
 
 // ---- 初始化 ----
@@ -326,6 +334,7 @@ async function init() {
   activeStoreId = cfg.stores[0]?.id || '3011';
   pollInterval = cfg.pollInterval || 15;
   countdown = pollInterval;
+  buildBaseUrl(); // 预构建请求 URL
 
   // 填充下拉
   const sel = document.getElementById('storeSelect');
@@ -357,31 +366,21 @@ async function init() {
 
   document.getElementById('footerInterval').textContent = pollInterval;
 
-  // 首次加载
-  await fetchStoreInfo();
-  await checkAlerts();
+  // 首次加载：拉取数据后立即检查提醒（无需等待 fetch 完成）
+  fetchStoreInfo();
   updateCountdown();
   setInterval(tickCountdown, 1000);
   setInterval(fetchStoreInfo, pollInterval * 1000);
   setInterval(checkAlerts, pollInterval * 1000 + 2000);
 }
 
-// ---- API 调用 ----
+// ---- API 调用（带请求去重） ----
+let _fetching = false;
 async function sushiroFetch(path) {
-  const cfg = loadCfg();
-  const proxyUrl = cfg.proxyUrl;
-
-  if (!proxyUrl) {
-    console.warn('未配置代理 URL，无法请求');
-    return null;
-  }
-
-  const auth = cfg.token.startsWith('Bearer ') ? cfg.token : 'Bearer ' + cfg.token;
-  const params = new URLSearchParams({ path, auth, code: cfg.appCode });
-  const url = proxyUrl + '?' + params.toString();
-
+  if (!_baseUrl) { console.warn('未配置代理 URL，无法请求'); return null; }
+  const url = _baseUrl + '?path=' + encodeURIComponent(path) + _baseParams;
   try {
-    const resp = await fetch(url);
+    const resp = await fetch(url, { keepalive: true });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     return await resp.json();
   } catch(e) {
@@ -392,52 +391,69 @@ async function sushiroFetch(path) {
 
 // ---- 获取门店信息 ----
 async function fetchStoreInfo() {
-  const data = await sushiroFetch('/wechat/api/2.0/getStoreById?storeId=' + activeStoreId);
-  if (!data) {
-    state.connected = false;
-    state.lastError = '网络请求失败';
+  // 请求去重：上一次请求未完成时不发起新请求
+  if (_fetching) return;
+  _fetching = true;
+  try {
+    const data = await sushiroFetch('/wechat/api/2.0/getStoreById?storeId=' + activeStoreId);
+    if (!data) {
+      state.connected = false;
+      state.lastError = '网络请求失败';
+      updateUI();
+      updateStatusDot(false);
+      return;
+    }
+
+    state.connected = true;
+    state.lastError = null;
+    state.lastUpdate = new Date().toISOString();
+    state.storeName = data.name || '未知门店';
+    state.totalWaiting = data.wait || 0;
+    state.estimatedWait = data.waitTimeCounter >= 0 ? data.waitTimeCounter : -1;
+
+    // 从 groupQueues 提取当前叫号
+    const gq = data.groupQueues || {};
+    const allNums = [...(gq.boothQueue || []), ...(gq.mixedQueue || []), ...(gq.counterQueue || [])];
+    if (allNums.length > 0) {
+      state.currentNumber = allNums[allNums.length - 1];
+    }
+
+    // 前面桌数：优先用号码差值（更准确），无号码时用系统 wait 估算
+    const curNum = parseInt(state.currentNumber);
+    const myNum = parseInt(state.myNumber);
+    if (state.myNumber && !isNaN(curNum) && !isNaN(myNum) && myNum >= curNum) {
+      state.tablesAhead = myNum - curNum;
+    } else if (data.wait > 0 && state.myNumber) {
+      state.tablesAhead = data.wait;
+    } else {
+      state.tablesAhead = -1;
+    }
+
     updateUI();
-    updateStatusDot(false);
-    return;
+    updateStatusDot(true);
+    countdown = pollInterval;
+
+    // 记录历史
+    history.push({
+      time: new Date().toISOString(),
+      current_number: state.currentNumber,
+      tables_ahead: state.tablesAhead,
+      estimated_wait: state.estimatedWait,
+      total_waiting: state.totalWaiting,
+    });
+    if (history.length > 500) history = history.slice(-500);
+
+    // 每20条保存
+    if (history.length % 20 === 0) {
+      localStorage.setItem('sushiro-history-' + activeStoreId, JSON.stringify(history));
+    }
+    drawChart();
+
+    // 数据更新后立即检查提醒
+    checkAlerts();
+  } finally {
+    _fetching = false;
   }
-
-  state.connected = true;
-  state.lastError = null;
-  state.lastUpdate = new Date().toISOString();
-  state.storeName = data.name || '未知门店';
-  state.totalWaiting = data.wait || 0;
-  state.estimatedWait = data.waitTimeCounter >= 0 ? data.waitTimeCounter : -1;
-
-  // 从 groupQueues 提取当前叫号
-  const gq = data.groupQueues || {};
-  const allNums = [...(gq.boothQueue || []), ...(gq.mixedQueue || []), ...(gq.counterQueue || [])];
-  if (allNums.length > 0) {
-    state.currentNumber = allNums[allNums.length - 1];
-  }
-  // 用系统 wait 数据估算前面桌数（比简单号码相减更准，已排除弃号/过号）
-  if (data.wait > 0 && state.myNumber) {
-    state.tablesAhead = data.wait;
-  }
-
-  updateUI();
-  updateStatusDot(true);
-  countdown = pollInterval;
-
-  // 记录历史
-  history.push({
-    time: new Date().toISOString(),
-    current_number: state.currentNumber,
-    tables_ahead: state.tablesAhead,
-    estimated_wait: state.estimatedWait,
-    total_waiting: state.totalWaiting,
-  });
-  if (history.length > 500) history = history.slice(-500);
-
-  // 每20条保存
-  if (history.length % 20 === 0) {
-    localStorage.setItem('sushiro-history-' + activeStoreId, JSON.stringify(history));
-  }
-  drawChart();
 }
 
 // ---- UI 更新 ----
@@ -542,7 +558,6 @@ function clearMyNumber() {
 async function refreshNow() {
   countdown = 2;
   await fetchStoreInfo();
-  await checkAlerts();
   toast('🔄 已刷新', '');
 }
 
@@ -563,22 +578,14 @@ function saveAlerts() {
 // ---- 设置弹窗 ----
 function showSettings() {
   const cfg = loadCfg();
-  document.getElementById('cfgProxyUrl').value = cfg.proxyUrl;
-  document.getElementById('cfgToken').value = cfg.token;
-  document.getElementById('cfgAppCode').value = cfg.appCode;
   document.getElementById('cfgStores').value = JSON.stringify(cfg.stores, null, 2);
   document.getElementById('settingsModal').classList.add('show');
 }
 function closeSettings() {
   document.getElementById('settingsModal').classList.remove('show');
-  // 关闭后当天不再自动弹出
-  localStorage.setItem('sushiro-setup-skipped', new Date().toDateString());
 }
 function saveSettings() {
   const cfg = loadCfg();
-  cfg.proxyUrl = document.getElementById('cfgProxyUrl').value.trim();
-  cfg.token = document.getElementById('cfgToken').value.trim();
-  cfg.appCode = document.getElementById('cfgAppCode').value.trim();
   try {
     cfg.stores = JSON.parse(document.getElementById('cfgStores').value);
   } catch(e) {
@@ -586,7 +593,6 @@ function saveSettings() {
     return;
   }
   saveCfg(cfg);
-  localStorage.setItem('sushiro-setup-skipped', new Date().toDateString());
   closeSettings();
   toast('✅ 保存成功', '刷新页面生效');
   setTimeout(() => location.reload(), 1500);
@@ -694,23 +700,11 @@ function drawChart() {
 }
 window.addEventListener('resize', drawChart);
 
-// ---- 首次启动检测 ----
-function checkFirstRun() {
-  const cfg = loadCfg();
-  if (!cfg.proxyUrl || !cfg.token) {
-    // 今天已经关掉过弹窗就不再自动弹
-    const skipped = localStorage.getItem('sushiro-setup-skipped');
-    if (skipped === new Date().toDateString()) return;
-    showSettings();
-  }
-}
-
 // ---- 启动 ----
 init().then(() => {
   // 加载历史
   const h = localStorage.getItem('sushiro-history-' + activeStoreId);
   if (h) { try { history = JSON.parse(h); drawChart(); } catch(e) {} }
-  checkFirstRun();
 });
 
 // ---- 画中画 (Document PiP) ----
