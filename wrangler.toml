@@ -1,0 +1,5 @@
+name = "sushiro-proxy"
+main = "cloudflare-worker.js"
+compatibility_date = "2024-01-01"
+
+# 免费计划: 100,000 请求/天，足够个人使用

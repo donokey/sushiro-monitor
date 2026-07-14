@@ -366,71 +366,108 @@ async function init() {
 
   document.getElementById('footerInterval').textContent = pollInterval;
 
-  // 首次加载：拉取数据后立即检查提醒（无需等待 fetch 完成）
+  // 先从缓存加载数据（秒出）
+  const cachePath = '/wechat/api/2.0/getStoreById?storeId=' + activeStoreId;
+  const cached = loadFromCache(cachePath);
+  if (cached) {
+    applyStoreData(cached);
+    console.log('📦 从缓存加载数据');
+  }
+
+  // 然后发起网络请求更新数据
   fetchStoreInfo();
   updateCountdown();
   setInterval(tickCountdown, 1000);
   setInterval(fetchStoreInfo, pollInterval * 1000);
   setInterval(checkAlerts, pollInterval * 1000 + 2000);
+
+  // 页面可见时立即刷新 + 网络恢复时立即刷新
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { countdown = 1; fetchStoreInfo(); } });
+  window.addEventListener('online', () => { countdown = 1; fetchStoreInfo(); });
 }
 
-// ---- API 调用（带请求去重） ----
+// ---- API 调用（带请求去重 + 超时 + 重试） ----
 let _fetching = false;
-async function sushiroFetch(path) {
+async function sushiroFetch(path, retries = 1) {
   if (!_baseUrl) { console.warn('未配置代理 URL，无法请求'); return null; }
   const url = _baseUrl + '?path=' + encodeURIComponent(path) + _baseParams;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000); // 5秒超时
   try {
-    const resp = await fetch(url, { keepalive: true });
+    const resp = await fetch(url, { keepalive: true, signal: ctrl.signal });
+    clearTimeout(timer);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    return await resp.json();
+    const data = await resp.json();
+    // 写入 localStorage 缓存
+    try { localStorage.setItem('sushiro-cache-' + path, JSON.stringify({ data, ts: Date.now() })); } catch(e) {}
+    return data;
   } catch(e) {
-    console.error('API 请求失败:', e);
+    clearTimeout(timer);
+    if (retries > 0) { console.warn('请求失败，重试中...', e.message); return sushiroFetch(path, retries - 1); }
+    console.error('API 请求失败:', e.message);
     return null;
   }
 }
 
+// ---- 从缓存加载数据（打开页面秒出） ----
+function loadFromCache(path) {
+  try {
+    const raw = localStorage.getItem('sushiro-cache-' + path);
+    if (!raw) return null;
+    const { data, ts } = JSON.parse(raw);
+    // 缓存有效期 30 秒
+    if (Date.now() - ts > 30000) return null;
+    return data;
+  } catch(e) { return null; }
+}
+
+// ---- 解析 API 数据（缓存和网络请求复用） ----
+function applyStoreData(data) {
+  state.connected = true;
+  state.lastError = null;
+  state.lastUpdate = new Date().toISOString();
+  state.storeName = data.name || '未知门店';
+  state.totalWaiting = data.wait || 0;
+  state.estimatedWait = data.waitTimeCounter >= 0 ? data.waitTimeCounter : -1;
+
+  // 从 groupQueues 提取当前叫号
+  const gq = data.groupQueues || {};
+  const allNums = [...(gq.boothQueue || []), ...(gq.mixedQueue || []), ...(gq.counterQueue || [])];
+  if (allNums.length > 0) {
+    state.currentNumber = allNums[allNums.length - 1];
+  }
+
+  // 前面桌数：优先用号码差值，无号码时用系统 wait 估算
+  const curNum = parseInt(state.currentNumber);
+  const myNum = parseInt(state.myNumber);
+  if (state.myNumber && !isNaN(curNum) && !isNaN(myNum) && myNum >= curNum) {
+    state.tablesAhead = myNum - curNum;
+  } else if (data.wait > 0 && state.myNumber) {
+    state.tablesAhead = data.wait;
+  } else {
+    state.tablesAhead = -1;
+  }
+
+  updateUI();
+  updateStatusDot(true);
+}
+
 // ---- 获取门店信息 ----
 async function fetchStoreInfo() {
-  // 请求去重：上一次请求未完成时不发起新请求
   if (_fetching) return;
   _fetching = true;
   try {
     const data = await sushiroFetch('/wechat/api/2.0/getStoreById?storeId=' + activeStoreId);
     if (!data) {
-      state.connected = false;
-      state.lastError = '网络请求失败';
-      updateUI();
-      updateStatusDot(false);
+      // 如果缓存已有数据，不覆盖为离线状态
+      if (!state.connected) {
+        state.lastError = '网络请求失败';
+        updateStatusDot(false);
+      }
       return;
     }
 
-    state.connected = true;
-    state.lastError = null;
-    state.lastUpdate = new Date().toISOString();
-    state.storeName = data.name || '未知门店';
-    state.totalWaiting = data.wait || 0;
-    state.estimatedWait = data.waitTimeCounter >= 0 ? data.waitTimeCounter : -1;
-
-    // 从 groupQueues 提取当前叫号
-    const gq = data.groupQueues || {};
-    const allNums = [...(gq.boothQueue || []), ...(gq.mixedQueue || []), ...(gq.counterQueue || [])];
-    if (allNums.length > 0) {
-      state.currentNumber = allNums[allNums.length - 1];
-    }
-
-    // 前面桌数：优先用号码差值（更准确），无号码时用系统 wait 估算
-    const curNum = parseInt(state.currentNumber);
-    const myNum = parseInt(state.myNumber);
-    if (state.myNumber && !isNaN(curNum) && !isNaN(myNum) && myNum >= curNum) {
-      state.tablesAhead = myNum - curNum;
-    } else if (data.wait > 0 && state.myNumber) {
-      state.tablesAhead = data.wait;
-    } else {
-      state.tablesAhead = -1;
-    }
-
-    updateUI();
-    updateStatusDot(true);
+    applyStoreData(data);
     countdown = pollInterval;
 
     // 记录历史
@@ -443,8 +480,8 @@ async function fetchStoreInfo() {
     });
     if (history.length > 500) history = history.slice(-500);
 
-    // 每20条保存
-    if (history.length % 20 === 0) {
+    // 每10条保存
+    if (history.length % 10 === 0) {
       localStorage.setItem('sushiro-history-' + activeStoreId, JSON.stringify(history));
     }
     drawChart();
