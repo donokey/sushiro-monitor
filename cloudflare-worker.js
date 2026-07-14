@@ -14,6 +14,7 @@ const ALLOWED_ORIGINS = [
   "http://localhost:8888",
   "http://127.0.0.1:8888",
   "https://donokey.github.io",
+  "https://sushiro-monitor.pages.dev",
   "null",
 ];
 
