@@ -8,3 +8,4 @@ history.json
 .ghtoken
 .sbtoken
 .wrangler/
+scripts/queue-data.json

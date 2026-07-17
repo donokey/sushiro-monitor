@@ -1,0 +1,13 @@
+{
+  "proxyUrl": "https://sushiro-proxy.don01936380.workers.dev",
+  "token": "4OI44O844Kv44Oz5qSc6Ki855So77yad2VjaGF05YWx6YCa4",
+  "appCode": "LX6Jh7A4L2vag3TS+rAM8ifIzQkF3ixJM/K8+e/cfxY=",
+  "stores": [
+    { "id": "3011", "name": "银泰in77 D馆" }
+  ],
+  "dingtalk_webhook": "",
+  "ai_api_url": "https://api.deepseek.com/v1/chat/completions",
+  "ai_model": "deepseek-chat",
+  "target_time": "18:30",
+  "check_interval_minutes": 10
+}

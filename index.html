@@ -203,6 +203,12 @@ body {
       <div class="stat-value" id="totalWaiting">---</div>
       <div class="stat-sub">桌</div>
     </div>
+    <div class="stat-card" id="reminderCard" style="display:none; border-color:var(--blue);">
+      <div class="stat-label">🎯 建议取号时间</div>
+      <div class="stat-value" id="suggestTime" style="color:var(--blue); font-size:28px;">--:--</div>
+      <div class="stat-sub" id="suggestCountdown">设置目标时间后显示</div>
+      <div class="stat-sub" id="aiStatus" style="color:var(--yellow); font-size:11px; margin-top:4px;">AI分析: 未启用</div>
+    </div>
   </div>
 
   <!-- Progress -->
@@ -232,6 +238,11 @@ body {
       <input type="number" id="alertWarning" value="10" style="width:60px;padding:4px 8px;" /> 桌 /
       <input type="number" id="alertLeave" value="5" style="width:60px;padding:4px 8px;" /> 桌出发
       <button class="btn btn-sm" onclick="saveAlerts()">保存</button>
+    </span>
+    <span style="font-size:12px;color:var(--text-secondary);margin-left:auto;">
+      🎯 目标用餐:
+      <input type="time" id="inputTargetTime" style="width:110px;padding:4px 8px;" />
+      <button class="btn btn-sm" onclick="setTargetTime()">设定</button>
     </span>
   </div>
 
@@ -287,6 +298,12 @@ let state = {
   connected: false, lastUpdate: null, lastError: null,
   storeName: '', currentNumber: '---', myNumber: '',
   tablesAhead: -1, estimatedWait: -1, queueSpeed: -1, totalWaiting: -1,
+  targetTime: '', suggestedTakeTime: null,
+  aiPrediction: null, aiLastFetch: 0, aiFetchInterval: 300000,
+};
+let queueMetrics = {
+  speedShort: -1, speedLong: -1, speedAvg: -1,
+  calcWait: -1, lastTakeTimeAlert: 0,
 };
 let history = [];
 let activeStoreId = DEFAULTS.stores[0].id;
@@ -359,6 +376,13 @@ async function init() {
   document.getElementById('alertWarning').value = aw;
   document.getElementById('alertLeave').value = al;
 
+  // 目标用餐时间
+  const tt = localStorage.getItem('sushiro-target-time-' + activeStoreId);
+  if (tt) {
+    state.targetTime = tt;
+    document.getElementById('inputTargetTime').value = tt;
+  }
+
   // 主题
   const theme = localStorage.getItem('sushiro-theme') || 'dark';
   document.documentElement.setAttribute('data-theme', theme);
@@ -386,37 +410,39 @@ async function init() {
   window.addEventListener('online', () => { countdown = 1; fetchStoreInfo(); });
 }
 
-// ---- API 调用（带请求去重 + 超时 + 重试） ----
+// ---- API 调用（带请求去重 + 超时保护） ----
 let _fetching = false;
-async function sushiroFetch(path, retries = 1) {
+async function sushiroFetch(path) {
   if (!_baseUrl) { console.warn('未配置代理 URL，无法请求'); return null; }
   const url = _baseUrl + '?path=' + encodeURIComponent(path) + _baseParams;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 5000); // 5秒超时
+  const timer = setTimeout(() => ctrl.abort(), 10000); // 10秒超时
   try {
     const resp = await fetch(url, { keepalive: true, signal: ctrl.signal });
     clearTimeout(timer);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
-    // 写入 localStorage 缓存
+    // 写入 localStorage 缓存（请求成功时更新缓存）
     try { localStorage.setItem('sushiro-cache-' + path, JSON.stringify({ data, ts: Date.now() })); } catch(e) {}
     return data;
   } catch(e) {
     clearTimeout(timer);
-    if (retries > 0) { console.warn('请求失败，重试中...', e.message); return sushiroFetch(path, retries - 1); }
+    // 请求失败时尝试返回过期缓存（总比空白好）
+    const stale = loadFromCache(path, true);
+    if (stale) { console.warn('请求失败，使用缓存数据'); return stale; }
     console.error('API 请求失败:', e.message);
     return null;
   }
 }
 
 // ---- 从缓存加载数据（打开页面秒出） ----
-function loadFromCache(path) {
+function loadFromCache(path, allowStale = false) {
   try {
     const raw = localStorage.getItem('sushiro-cache-' + path);
     if (!raw) return null;
     const { data, ts } = JSON.parse(raw);
-    // 缓存有效期 30 秒
-    if (Date.now() - ts > 30000) return null;
+    // 正常模式: 缓存有效期 30 秒; 容灾模式: 不限期
+    if (!allowStale && Date.now() - ts > 30000) return null;
     return data;
   } catch(e) { return null; }
 }
@@ -446,6 +472,13 @@ function applyStoreData(data) {
     state.tablesAhead = data.wait;
   } else {
     state.tablesAhead = -1;
+  }
+
+  calcQueueSpeed();
+  updateSuggestedTakeTime();
+  // 每5分钟触发一次 AI 预测（非阻塞）
+  if (state.targetTime && Date.now() - state.aiLastFetch > state.aiFetchInterval) {
+    fetchAIPrediction();
   }
 
   updateUI();
@@ -612,6 +645,173 @@ function saveAlerts() {
   toast('✅ 已保存', `提醒阈值: ${aw}桌 / ${al}桌`);
 }
 
+// ---- 工具函数 ----
+function formatTime(d) {
+  if (!(d instanceof Date)) return '--:--';
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+
+// ---- 叫号速度计算 ----
+function calcQueueSpeed() {
+  const m = queueMetrics;
+  // 从 history 取有效数据点（current_number 为数字且 > 0）
+  const valid = history.filter(h => {
+    const n = parseInt(h.current_number);
+    return !isNaN(n) && n > 0;
+  });
+  if (valid.length < 5) { m.speedAvg = -1; m.calcWait = -1; state.queueSpeed = -1; return; }
+
+  function calcSpeed(arr) {
+    if (arr.length < 2) return -1;
+    const first = arr[0], last = arr[arr.length - 1];
+    const numDiff = parseInt(last.current_number) - parseInt(first.current_number);
+    const timeDiff = (new Date(last.time) - new Date(first.time)) / 3600000; // 小时
+    if (timeDiff <= 0 || numDiff <= 0) return -1;
+    return Math.round(numDiff / timeDiff);
+  }
+
+  m.speedShort = calcSpeed(valid.slice(-10)); // 约2.5分钟窗口
+  m.speedLong = calcSpeed(valid.slice(-30));  // 约7.5分钟窗口
+
+  if (m.speedShort > 0 && m.speedLong > 0) {
+    m.speedAvg = Math.round(m.speedShort * 0.6 + m.speedLong * 0.4);
+  } else if (m.speedShort > 0) {
+    m.speedAvg = m.speedShort;
+  } else if (m.speedLong > 0) {
+    m.speedAvg = m.speedLong;
+  } else {
+    m.speedAvg = -1;
+  }
+  state.queueSpeed = m.speedAvg;
+
+  // 计算预计等待（分钟）
+  if (m.speedAvg > 0 && state.tablesAhead >= 0) {
+    m.calcWait = Math.round(state.tablesAhead / m.speedAvg * 60);
+  } else {
+    m.calcWait = -1;
+  }
+}
+
+// ---- AI 预测 ----
+async function fetchAIPrediction() {
+  if (!state.targetTime) return;
+  if (Date.now() - state.aiLastFetch < state.aiFetchInterval) return;
+
+  const payload = {
+    storeName: state.storeName,
+    currentTime: new Date().toISOString(),
+    targetTime: state.targetTime,
+    currentNumber: state.currentNumber,
+    tablesAhead: state.tablesAhead,
+    totalWaiting: state.totalWaiting,
+    apiWait: state.estimatedWait,
+    queueSpeed: queueMetrics.speedAvg,
+    history: history.slice(-20).map(h => ({
+      time: h.time,
+      current_number: h.current_number,
+      tables_ahead: h.tables_ahead,
+      total_waiting: h.total_waiting,
+    })),
+  };
+
+  const cfg = loadCfg();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30000); // AI 给 30 秒
+  try {
+    const resp = await fetch(cfg.proxyUrl + '?path=/ai/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (resp.ok) {
+      state.aiPrediction = await resp.json();
+      state.aiLastFetch = Date.now();
+      updateAIStatus();
+      updateSuggestedTakeTime(); // AI 数据到了，重新计算建议时间
+    }
+  } catch(e) {
+    clearTimeout(timer);
+    console.warn('AI 预测失败，降级为纯脚本模式:', e.message);
+  }
+}
+
+function updateAIStatus() {
+  const el = document.getElementById('aiStatus');
+  if (!el) return;
+  if (state.aiPrediction) {
+    const p = state.aiPrediction;
+    el.textContent = `AI: ${p.trend || '?'} | 置信度 ${p.confidence || '?'} | ${formatTime(new Date(state.aiLastFetch))}`;
+    el.style.color = (p.confidence || 0) > 0.7 ? 'var(--green)' : 'var(--yellow)';
+  } else {
+    el.textContent = 'AI分析: 等待数据积累 (需观察5分钟)';
+    el.style.color = 'var(--text-secondary)';
+  }
+}
+
+// ---- 建议取号时间（融合 AI + 脚本 + API） ----
+function updateSuggestedTakeTime() {
+  if (!state.targetTime) return;
+
+  let blendWait;
+  const ai = state.aiPrediction;
+  const m = queueMetrics;
+
+  if (ai && ai.confidence > 0.5 && m.speedAvg > 0) {
+    // AI + 脚本 + API 三源融合
+    blendWait = m.calcWait * 0.3 + state.estimatedWait * 0.2 + (ai.predicted_wait_minutes || state.estimatedWait) * 0.5;
+  } else if (m.speedAvg > 0) {
+    // 脚本 + API 双源
+    blendWait = m.calcWait * 0.6 + state.estimatedWait * 0.4;
+  } else {
+    // 纯 API 兖底
+    blendWait = state.estimatedWait;
+  }
+
+  if (!blendWait || blendWait < 0) blendWait = state.estimatedWait >= 0 ? state.estimatedWait : 30;
+
+  const buffer = 10; // 安全余量（分钟）
+  const [h, min] = state.targetTime.split(':').map(Number);
+  const target = new Date();
+  target.setHours(h, min, 0, 0);
+  // 如果目标时间已过，设为明天
+  if (target <= new Date()) target.setDate(target.getDate() + 1);
+
+  state.suggestedTakeTime = new Date(target.getTime() - (blendWait + buffer) * 60000);
+
+  // 更新 UI
+  const card = document.getElementById('reminderCard');
+  if (card) card.style.display = '';
+  const st = document.getElementById('suggestTime');
+  if (st) st.textContent = formatTime(state.suggestedTakeTime);
+  updateSuggestCountdown();
+}
+
+function updateSuggestCountdown() {
+  if (!state.suggestedTakeTime) return;
+  const el = document.getElementById('suggestCountdown');
+  if (!el) return;
+  const diff = state.suggestedTakeTime - new Date();
+  if (diff <= 0) {
+    el.textContent = '⏰ 现在就该取号了!';
+    el.style.color = 'var(--accent-glow)';
+  } else {
+    const mins = Math.ceil(diff / 60000);
+    el.textContent = `还有 ${mins} 分钟`;
+    el.style.color = '';
+  }
+}
+
+function setTargetTime() {
+  const t = document.getElementById('inputTargetTime').value;
+  if (!t) return;
+  state.targetTime = t;
+  localStorage.setItem('sushiro-target-time-' + activeStoreId, t);
+  updateSuggestedTakeTime();
+  toast('🎯 目标已设定', t + ' 用餐，系统将计算建议取号时间');
+}
+
 // ---- 设置弹窗 ----
 function showSettings() {
   const cfg = loadCfg();
@@ -672,7 +872,27 @@ function beep(times) {
 }
 
 // ---- 倒计时 ----
-function tickCountdown() { countdown--; if (countdown < 0) countdown = pollInterval; updateCountdown(); }
+function tickCountdown() {
+  countdown--;
+  if (countdown < 0) countdown = pollInterval;
+  updateCountdown();
+  updateSuggestCountdown();
+
+  // 取号提醒检查
+  if (state.suggestedTakeTime) {
+    const now = Date.now();
+    const diff = now - state.suggestedTakeTime.getTime();
+    const sinceLastAlert = now - queueMetrics.lastTakeTimeAlert;
+    if (diff >= 0 && sinceLastAlert > 300000) { // 到时间了，每5分钟提醒一次
+      toast('⏰ 该取号了!', `建议取号时间已到，目标 ${state.targetTime} 用餐`);
+      if (soundEnabled) beep(2);
+      const banner = document.getElementById('alertBanner');
+      banner.className = 'alert-banner urgent';
+      banner.textContent = '⏰ 现在该取号了! 目标 ' + state.targetTime + ' 用餐';
+      queueMetrics.lastTakeTimeAlert = now;
+    }
+  }
+}
 function updateCountdown() {
   const el = document.getElementById('statusDot');
   if (el) el.title = '下次刷新: ' + countdown + '秒';
@@ -781,13 +1001,14 @@ async function openPiP() {
       '.val.big{font-size:30px}.val.red{color:'+accent+'}' +
       '.hr{height:1px;background:'+border+';margin:8px 0}' +
       '.w2{display:flex;justify-content:space-between}.w2 .val{font-size:16px}' +
+      '.w3{display:flex;justify-content:space-between;gap:8px;margin-top:6px}.w3 .val{font-size:14px}.w3 .lbl{font-size:11px}' +
       '.ft{font-size:11px;color:'+sec+';text-align:right;margin-top:8px}' +
       '</style></head><body>' +
       '<div class="hdr"><span>🍣 寿司郎排队监控</span><span><span id="dot" class="dot off"></span><span id="timer">--</span>s</span></div>' +
       '<div class="row"><span class="lbl">当前叫号</span><span class="val big" id="cur">---</span></div>' +
       '<div class="hr"></div>' +
       '<div class="row"><span class="lbl">我的号码</span><span class="val red" id="my">---</span></div>' +
-      '<div class="w2"><div><div class="lbl">前面还有</div><div class="val" id="ahead">---</div></div><div><div class="lbl">预计等待</div><div class="val" id="wait">---</div></div></div>' +
+      '<div class="w3"><div><div class="lbl">前面还有</div><div class="val" id="ahead">---</div></div><div><div class="lbl">预计等待</div><div class="val" id="wait">---</div></div><div><div class="lbl">总排队</div><div class="val" id="total">---</div></div></div>' +
       '<div class="ft" id="store">---</div>' +
       '</body></html>');
     pipWindow.document.close();
@@ -814,6 +1035,7 @@ function updatePiP() {
     d.getElementById('my').textContent = state.myNumber || '---';
     d.getElementById('ahead').textContent = state.tablesAhead >= 0 ? state.tablesAhead + ' 桌' : '---';
     d.getElementById('wait').textContent = state.estimatedWait >= 0 ? state.estimatedWait + ' 分钟' : '---';
+    d.getElementById('total').textContent = state.totalWaiting >= 0 ? state.totalWaiting + ' 桌' : '---';
     d.getElementById('store').textContent = state.storeName;
     const dot = d.getElementById('dot');
     dot.className = 'dot ' + (state.connected ? 'on' : 'off');

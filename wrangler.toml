@@ -2,4 +2,8 @@ name = "sushiro-proxy"
 main = "cloudflare-worker.js"
 compatibility_date = "2024-01-01"
 
-# 免费计划: 100,000 请求/天，足够个人使用
+# 免费计划: 100,000 请求/天
+
+# AI API key 通过 wrangler secret 设置（不会暴露在代码中）:
+#   wrangler secret put AI_API_KEY
+# 然后粘贴你的 DeepSeek API key
